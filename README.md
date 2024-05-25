@@ -18,13 +18,13 @@ There are 3 methods available and they all return data in an array unless the er
 		- this will search for emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value
 
 Public Properties:
-		error - true/false if there was an error
-		msg_count - total emails that were found
-		lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
-		messages - associative array containing the email messages found with the following fields:
-			-> subject - the email subject
-			-> message_body - the body of the email
-			-> fromaddress - the email address that sent the email
-			-> from - the friendly name (e.g. Jon Doe)
-			-> message_number - the unique ID of the message (UID) from the mailbox
-			-> date - the date and time with UTC difference the message was sent (e.g. Fri, 24 May 2024 15:53:38 -0400)
+	error - true/false if there was an error
+	msg_count - total emails that were found
+	lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
+	messages - associative array containing the email messages found with the following fields:
+		-> subject - the email subject
+		-> message_body - the body of the email
+		-> fromaddress - the email address that sent the email
+		-> from - the friendly name (e.g. Jon Doe)
+		-> message_number - the unique ID of the message (UID) from the mailbox
+		-> date - the date and time with UTC difference the message was sent (e.g. Fri, 24 May 2024 15:53:38 -0400)
