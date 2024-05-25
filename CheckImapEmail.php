@@ -23,7 +23,6 @@
 //
 //	Public Properties:
 //		error - true/false if there was an error
-//		msg_count - total emails that were found
 //		lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
 //		messages - associative array containing the email messages found with the following fields:
 //			-> subject - the email subject
@@ -41,7 +40,6 @@ class CheckImapEmail extends CheckImapConnection {
 	private $conn;
 		
 	public function __construct(
-		public int $msg_count = 0,
 		public int $lastuid = 0,
 		public array $messages = [],
 		public bool $error = false
@@ -76,9 +74,9 @@ class CheckImapEmail extends CheckImapConnection {
 	// this method will check the mailbox and return each email it finds as an array
 	*/
 	public function checkEmail() {	
-		$this->msg_count = imap_num_msg($this->conn);
+		$msg_count = imap_num_msg($this->conn);
 	
-		for ($i = 1; $i <= $this->msg_count; $i++) {
+		for ($i = 1; $i <= $msg_count; $i++) {
 			$header = imap_headerinfo($this->conn, $i);
 		
 			$this->messages[$i]['subject'] = $header->Subject;
@@ -113,9 +111,7 @@ class CheckImapEmail extends CheckImapConnection {
 		if (!$search) { return false; }
 		if (!is_array($search)) { return false; }
 		if (count($search) == 0) { return false; }
-		
-		$this->msg_count = count($search);
-		
+				
 		foreach ($search as $thismsg) {
 			$header = imap_headerinfo($this->conn, $thismsg);
 		
@@ -151,8 +147,6 @@ class CheckImapEmail extends CheckImapConnection {
 		if (!$search) { return false; }
 		if (!is_array($search)) { return false; }
 		if (count($search) == 0) { return false; }
-			
-		$this->msg_count = count($search);
 		
 		foreach ($search as $thisuid) {
 			$thismsg = $thisuid->uid;

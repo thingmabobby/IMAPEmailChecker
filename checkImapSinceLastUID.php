@@ -12,7 +12,7 @@ if ($checkemail->error) {
 }
 else {
 	if ($messages) {
-		echo "<h2>Emails found: " . $checkemail->msg_count . "</h2>";
+		echo "<h2>Emails found: " . count($messages) . "</h2>";
 		
 		// loop through the emails
 		foreach ($messages as $message) {
