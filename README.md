@@ -4,7 +4,7 @@ I was testing to see if I could write a script to analyze incoming email message
 
 Usage:
 
-Instantiating the class requires connection information: $checkemail = new CheckImapEmail($server,$acct,$pass);
+Instantiating the class requires connection information. Right now you can supply them in the CheckImapConnection class in CheckImapConnection.php.
 
 There are 3 methods available and they all return data in an array unless the error property is set to true (then it returns an error string):
 
