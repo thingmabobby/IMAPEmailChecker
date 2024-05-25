@@ -21,9 +21,7 @@ There are 3 methods available and they all return data in an array unless the er
 Public Properties:
 
 	error - true/false if there was an error
- 
-	msg_count - total emails that were found
- 
+  
 	lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
  
 	messages - associative array containing the email messages found with the following fields:
