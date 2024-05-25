@@ -4,11 +4,9 @@ I was testing to see if I could write a script to analyze incoming email message
 
 Usage:
 
-Instantiating the class requires connection information. Right now you can supply them in the CheckImapConnection class in CheckImapConnection.php.
+There are 3 methods available and they all return data in an array:
 
-There are 3 methods available and they all return data in an array unless the error property is set to true (then it returns an error string):
-
- 	checkEmail() 
+ 	checkAllEmail() 
 		- this in theory should return all of your emails, but I haven't fully tested it in a large inbox.
   
 	checkSinceDate($thedate) 
@@ -19,8 +17,6 @@ There are 3 methods available and they all return data in an array unless the er
 
 
 Public Properties:
-
-	error - true/false if there was an error
   
 	lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
  

@@ -1,15 +1,22 @@
 <?php
+/*
+// show emails since specified email UID test
+*/
 
-require_once('CheckImapEmail.php');
-$checkemail = new CheckImapEmail;
+require_once('IMAPEmailChecker.php');
 
-/* show emails since specified email UID test */
-$messages = $checkemail->checkSinceLastUID(4);
+$server = ""; // imap server url
+$acct = ""; // email address
+$pass = ""; // email password	
 
-// if an error was returned then show the error, otherwise loop through the messages
-if ($checkemail->error) {
-	echo "Error(s): " . $messages;
-} else {
+use IMAP\Connection;
+
+try {
+	$imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
+	$checkEmail = new IMAPEmailChecker($imapConnection);
+	
+	$messages = $checkEmail->checkSinceLastUID(4);
+
 	if ($messages) {
 		echo "<h2>Emails found: " . count($messages) . "</h2>";
 		
@@ -25,12 +32,13 @@ if ($checkemail->error) {
 			Body:<br>" . $message['message_body'] . "<br><br>";		
 		}
 		
-		if ($checkemail->lastuid > 0) {
-			echo "The last UID was " . $checkemail->lastuid;
+		if ($checkEmail->lastuid > 0) {
+			echo "The last UID was " . $checkEmail->lastuid;
 		}
 	} else {
 		echo "No messages found.";
 	}
+} catch (Exception $e) {
+	echo $e->getMessage();
 }
-
 ?>

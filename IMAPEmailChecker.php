@@ -4,14 +4,14 @@
 // This is a class to pull emails from a mailbox using IMAP. You can probably safely ignore the "bid" you'll see. 
 // It's something I was testing to be able to organize emails by subject if it found a string of #N (n = a number). Kinda like how ticketing systems work.
 // I was testing to see if I could write a script to analyze incoming email messages as a cron job and save them to a database and associate them with specific items.
-
+//
 // Usage:
 //
 // Instantiating the class requires connection information located in the class found in CheckImapConnection.php 
 //
 // There are 3 methods available and they all return data in an array unless the error property is set to true (then it returns an error string):
 //
-// 	checkEmail() 
+// 	checkAllEmail() 
 //		- this in theory should return all of your emails, but I haven't fully tested it in a large inbox.
 //  
 //	checkSinceDate($thedate) 
@@ -22,7 +22,6 @@
 //
 //
 //	Public Properties:
-//		error - true/false if there was an error
 //		lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
 //		messages - associative array containing the email messages found with the following fields:
 //			-> subject - the email subject
@@ -34,29 +33,18 @@
 */
 
 declare(strict_types=1);
-require_once('CheckImapConnection.php');
 
-class CheckImapEmail extends CheckImapConnection 
+class IMAPEmailChecker
 {	
 	private $conn;
 		
-	public function __construct(
-		public int $lastuid = 0,
-		public array $messages = [],
-		public bool $error = false
-	) {
-		if (!$this->server || !$this->acct || !$this->pass) { 
-			return false; 
+	public function __construct(IMAP\Connection $connection, public int $lastuid = 0, public array $messages = []) 
+	{		
+		if ($connection === false) { 
+			throw new Exception('IMAP:' . imap_last_error());
 		}
 		
-		if (!empty($this->port)) { 
-			$this->server .= ":" . $this->port; 
-		}
-		
-		$this->conn = @imap_open("{" . $this->server . "}", $this->acct, $this->pass);
-		if (!$this->conn) { 
-			return $this->showError(imap_errors()); 
-		}
+		$this->conn = $connection;
 	}
 	
 	
@@ -64,19 +52,6 @@ class CheckImapEmail extends CheckImapConnection
 	{
 		if (isset($this->conn)) { 
 			imap_close($this->conn); 
-		}
-	}
-	
-	
-	private function showError(array $error) 
-	{
-		if ($error) {
-			$errorstring = "";
-			foreach ($error as $thiserror) {
-				$errorstring .= $thiserror . "\n";
-			}
-			$this->error = true;
-			return $errorstring;
 		}
 	}
 	
@@ -102,7 +77,7 @@ class CheckImapEmail extends CheckImapConnection
 	/*
 	// this method will check the mailbox and return each email it finds as an array
 	*/
-	public function checkEmail() 
+	public function checkAllEmail(): array 
 	{	
 		$msg_count = imap_num_msg($this->conn);
 	
@@ -133,7 +108,7 @@ class CheckImapEmail extends CheckImapConnection
 	// this method will search for emails since the given date from the mailbox and return each email it finds as an array
 	// $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024)
 	*/
-	public function checkSinceDate(string $thedate) 
+	public function checkSinceDate(string $thedate): bool | array 
 	{
 		if (!isset($thedate)) { 
 			return false; 
@@ -171,7 +146,7 @@ class CheckImapEmail extends CheckImapConnection
 	/*
 	// this method checks all emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value
 	*/
-	public function checkSinceLastUID(int $uid) 
+	public function checkSinceLastUID(int $uid): bool | array 
 	{
 		if (!isset($uid)) { 
 			return false; 
