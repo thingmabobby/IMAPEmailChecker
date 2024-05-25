@@ -36,7 +36,8 @@
 declare(strict_types=1);
 require_once('CheckImapConnection.php');
 
-class CheckImapEmail extends CheckImapConnection {	
+class CheckImapEmail extends CheckImapConnection 
+{	
 	private $conn;
 		
 	public function __construct(
@@ -44,21 +45,31 @@ class CheckImapEmail extends CheckImapConnection {
 		public array $messages = [],
 		public bool $error = false
 	) {
-		if (!$this->server || !$this->acct || !$this->pass) { return false; }
+		if (!$this->server || !$this->acct || !$this->pass) { 
+			return false; 
+		}
 		
-		if (!empty($this->port)) { $this->server .= ":" . $this->port; }
+		if (!empty($this->port)) { 
+			$this->server .= ":" . $this->port; 
+		}
 		
 		$this->conn = @imap_open("{" . $this->server . "}", $this->acct, $this->pass);
-		if (!$this->conn) { return $this->showError(imap_errors()); }
+		if (!$this->conn) { 
+			return $this->showError(imap_errors()); 
+		}
 	}
 	
 	
-	public function __destruct() {
-		if (isset($this->conn)) { imap_close($this->conn); }
+	public function __destruct() 
+	{
+		if (isset($this->conn)) { 
+			imap_close($this->conn); 
+		}
 	}
 	
 	
-	private function showError(array $error) {
+	private function showError(array $error) 
+	{
 		if ($error) {
 			$errorstring = "";
 			foreach ($error as $thiserror) {
@@ -70,10 +81,29 @@ class CheckImapEmail extends CheckImapConnection {
 	}
 	
 	
+	private function validateResults(array $results): bool
+	{
+		if (!$results) {
+			return false;
+		}
+
+		if (!is_array($results)) {
+			return false;
+		}
+
+		if (count($results) == 0) {
+			return false;
+		}
+		
+		return true;
+	}
+	
+	
 	/*
 	// this method will check the mailbox and return each email it finds as an array
 	*/
-	public function checkEmail() {	
+	public function checkEmail() 
+	{	
 		$msg_count = imap_num_msg($this->conn);
 	
 		for ($i = 1; $i <= $msg_count; $i++) {
@@ -103,14 +133,17 @@ class CheckImapEmail extends CheckImapConnection {
 	// this method will search for emails since the given date from the mailbox and return each email it finds as an array
 	// $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024)
 	*/
-	public function checkSinceDate(string $thedate) {
-		if (!isset($thedate)) { return false; }
+	public function checkSinceDate(string $thedate) 
+	{
+		if (!isset($thedate)) { 
+			return false; 
+		}
 		
 		$search = imap_search($this->conn, "SINCE \"" . $thedate . "\"", SE_UID); 
 		
-		if (!$search) { return false; }
-		if (!is_array($search)) { return false; }
-		if (count($search) == 0) { return false; }
+		if (!$this->validateResults($search)) {
+			return false;
+		}
 				
 		foreach ($search as $thismsg) {
 			$header = imap_headerinfo($this->conn, $thismsg);
@@ -138,15 +171,18 @@ class CheckImapEmail extends CheckImapConnection {
 	/*
 	// this method checks all emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value
 	*/
-	public function checkSinceLastUID(int $uid) {
-		if (!isset($uid)) { return false; }
+	public function checkSinceLastUID(int $uid) 
+	{
+		if (!isset($uid)) { 
+			return false; 
+		}
 		
 		// grab the overview details from the mailbox starting from the specified message ID (UID)
 		$search = imap_fetch_overview($this->conn, $uid . ":*", FT_UID); 
 		
-		if (!$search) { return false; }
-		if (!is_array($search)) { return false; }
-		if (count($search) == 0) { return false; }
+		if (!$this->validateResults($search)) {
+			return false;
+		}
 		
 		foreach ($search as $thisuid) {
 			$thismsg = $thisuid->uid;

@@ -10,8 +10,7 @@ $messages = $checkemail->checkSinceDate($thedate);
 // if an error was returned then show the error, otherwise loop through the messages
 if ($checkemail->error) {
 	echo "Error(s): " . $messages;
-}
-else {
+} else {
 	if ($messages) {
 		echo "<h2>Emails found: " . count($messages) . "</h2>";
 		
@@ -30,8 +29,7 @@ else {
 		if ($checkemail->lastuid > 0) {
 			echo "The last UID was " . $checkemail->lastuid;
 		}
-	}
-	else {
+	} else {
 		echo "No messages found.";
 	}
 }
