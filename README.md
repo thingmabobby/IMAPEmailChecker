@@ -17,10 +17,15 @@ There are 3 methods available and they all return data in an array unless the er
 	checkSinceLastUID($uid)
 		- this will search for emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value
 
+
 Public Properties:
+
 	error - true/false if there was an error
+ 
 	msg_count - total emails that were found
+ 
 	lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
+ 
 	messages - associative array containing the email messages found with the following fields:
 		-> subject - the email subject
 		-> message_body - the body of the email
