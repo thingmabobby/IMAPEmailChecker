@@ -7,7 +7,7 @@
 
 // Usage:
 //
-// Instantiating the class requires connection information: $checkemail = new CheckImapEmail($server,$acct,$pass);
+// Instantiating the class requires connection information located in the class found in CheckImapConnection.php 
 //
 // There are 3 methods available and they all return data in an array unless the error property is set to true (then it returns an error string):
 //
@@ -20,32 +20,48 @@
 //	checkSinceLastUID($uid)
 //		- this will search for emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value
 //
+//
+//	Public Properties:
+//		error - true/false if there was an error
+//		msg_count - total emails that were found
+//		lastuid - if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
+//		messages - associative array containing the email messages found with the following fields:
+//			-> subject - the email subject
+//			-> message_body - the body of the email
+//			-> fromaddress - the email address that sent the email
+//			-> from - the friendly name (e.g. Jon Doe)
+//			-> message_number - the unique ID of the message (UID) from the mailbox
+//			-> date - the date and time with UTC difference the message was sent (e.g. Fri, 24 May 2024 15:53:38 -0400)
 */
-class CheckImapEmail {
+
+declare(strict_types=1);
+require_once('CheckImapConnection.php');
+
+class CheckImapEmail extends CheckImapConnection {	
 	private $conn;
-	
-	public $msg_count = 0; // how many total emails are found
-	public $lastuid = 0; // if searching by last UID it will return the last UID found so you can store it and refer to it in your next search to pull the latest emails since the last time you searched
-	public $messages = array();
-	public $error = false;
-	
-	
-	public function __construct($server,$acct,$pass,$port = "") {
-		if (!$server || !$acct || !$pass) { return false; }
 		
-		if (!empty($port)) { $server .= ":" . $port; }
+	public function __construct(
+		public int $msg_count = 0,
+		public int $lastuid = 0,
+		public array $messages = [],
+		public bool $error = false
+	) {
+		if (!$this->server || !$this->acct || !$this->pass) { return false; }
 		
-		$this->conn = @imap_open("{" . $server . "}", $acct, $pass);
+		if (!empty($this->port)) { $this->server .= ":" . $this->port; }
+		
+		$this->conn = @imap_open("{" . $this->server . "}", $this->acct, $this->pass);
+		if (!$this->conn) { return $this->showError(imap_errors()); }
 	}
 	
 	
 	public function __destruct() {
-		if (isset($this->conn)) { unset($this->conn); }
+		if (isset($this->conn)) { imap_close($this->conn); }
 	}
 	
 	
-	private function showError($error) {
-		if ($error && is_array($error)) {
+	private function showError(array $error) {
+		if ($error) {
 			$errorstring = "";
 			foreach ($error as $thiserror) {
 				$errorstring .= $thiserror . "\n";
@@ -59,16 +75,14 @@ class CheckImapEmail {
 	/*
 	// this method will check the mailbox and return each email it finds as an array
 	*/
-	public function checkEmail() {
-		if (!$this->conn) { return $this->showError(imap_errors()); }
-		
+	public function checkEmail() {	
 		$this->msg_count = imap_num_msg($this->conn);
 	
-		for($i = 1; $i <= $this->msg_count; $i++) {
+		for ($i = 1; $i <= $this->msg_count; $i++) {
 			$header = imap_headerinfo($this->conn, $i);
 		
 			$this->messages[$i]['subject'] = $header->Subject;
-			$this->messages[$i]['message_body'] = imap_fetchbody($this->conn, $i, 2);
+			$this->messages[$i]['message_body'] = imap_fetchbody($this->conn, $i, "2");
 			$this->messages[$i]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$i]['from'] = $header->fromaddress;
 			$this->messages[$i]['message_number'] = $header->Msgno;
@@ -91,8 +105,7 @@ class CheckImapEmail {
 	// this method will search for emails since the given date from the mailbox and return each email it finds as an array
 	// $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024)
 	*/
-	public function checkSinceDate($thedate) {
-		if (!$this->conn) { return $this->showError(imap_errors()); }
+	public function checkSinceDate(string $thedate) {
 		if (!isset($thedate)) { return false; }
 		
 		$search = imap_search($this->conn, "SINCE \"" . $thedate . "\"", SE_UID); 
@@ -107,7 +120,7 @@ class CheckImapEmail {
 			$header = imap_headerinfo($this->conn, $thismsg);
 		
 			$this->messages[$thismsg]['subject'] = $header->Subject;
-			$this->messages[$thismsg]['message_body'] = imap_fetchbody($this->conn, $thismsg, 2);
+			$this->messages[$thismsg]['message_body'] = imap_fetchbody($this->conn, $thismsg, "2");
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$thismsg]['from'] = $header->fromaddress;
 			$this->messages[$thismsg]['message_number'] = $header->Msgno;
@@ -129,8 +142,7 @@ class CheckImapEmail {
 	/*
 	// this method checks all emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value
 	*/
-	public function checkSinceLastUID($uid) {
-		if (!$this->conn) { return $this->showError(imap_errors()); }
+	public function checkSinceLastUID(int $uid) {
 		if (!isset($uid)) { return false; }
 		
 		// grab the overview details from the mailbox starting from the specified message ID (UID)
@@ -148,7 +160,7 @@ class CheckImapEmail {
 			$header = imap_headerinfo($this->conn, $thismsg);
 			
 			$this->messages[$thismsg]['subject'] = $header->Subject;
-			$this->messages[$thismsg]['message_body'] = imap_fetchbody($this->conn, $thismsg, 2);
+			$this->messages[$thismsg]['message_body'] = imap_fetchbody($this->conn, $thismsg, "2");
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$thismsg]['from'] = $header->fromaddress;
 			$this->messages[$thismsg]['message_number'] = $header->Msgno;
@@ -165,53 +177,5 @@ class CheckImapEmail {
 		$this->lastuid = $thismsg;		
 		
 		return $this->messages;
-	}
-}
-
-
-$server = ""; // imap server url (usually imap.domain.tld)
-$acct = ""; // email address
-$pass = ""; // email password
-$checkemail = new CheckImapEmail($server,$acct,$pass);
-
-
-/* show all emails test */
-//$messages = $checkemail->checkEmail();
-
-
-/* search by date test */
-//$thedate = "24 May 2024";
-//$messages = $checkemail->checkSinceDate($thedate);
-
-
-/* show emails since specified email UID test */
-$messages = $checkemail->checkSinceLastUID(4);
-
-
-// if an error was returned then show the error, otherwise loop through the messages
-if ($checkemail->error) {
-	echo "Error(s): " . $messages;
-}
-else {
-	if ($messages) {
-		echo "<h2>Emails found: " . $checkemail->msg_count . "</h2>";
-		
-		// loop through the emails
-		foreach ($messages as $message) {
-			echo "Message #" . $message['message_number'] . "<br>";
-			echo "Bid: " . $message['bid'] . "<br>";
-			echo "Date: " . $message['date'] . "<br>";
-			echo "From: " . $message['from'] . " (" . $message['fromaddress'] . ")<br>";
-			echo "Unread? " . $message['unseen'] . "<br>";
-			echo "Subject: " . $message['subject'] . "<br>";
-			echo "Body:<br>" . $message['message_body'] . "<br><br>";		
-		}
-		
-		if ($checkemail->lastuid > 0) {
-			echo "The last UID was " . $checkemail->lastuid;
-		}
-	}
-	else {
-		echo "No messages found.";
 	}
 }
