@@ -11,7 +11,9 @@ $pass = ""; // email password
 
 
 $imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
-if ($imapConnection) {
+if (!$imapConnection) {
+	echo "Error connecting to IMAP mailbox!";
+} else {
 	$checkEmail = new IMAPEmailChecker($imapConnection);
 	
 	$messages = $checkEmail->checkSinceLastUID(4);

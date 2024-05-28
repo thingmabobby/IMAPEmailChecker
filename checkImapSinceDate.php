@@ -10,7 +10,9 @@ $acct = ""; // email address
 $pass = ""; // email password	
 
 $imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
-if ($imapConnection) {
+if (!$imapConnection) {
+	echo "Error connecting to IMAP mailbox!";
+} else {
 	$checkEmail = new IMAPEmailChecker($imapConnection);
 
 	$thedate = "24 May 2024";
