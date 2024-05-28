@@ -37,12 +37,8 @@ class IMAPEmailChecker
 {	
 	private $conn;
 		
-	public function __construct(IMAP\Connection $connection, public int $lastuid = 0, public array $messages = []) 
+	public function __construct($connection, public int $lastuid = 0, public array $messages = []) 
 	{		
-		if ($connection === false) { 
-			throw new Exception('IMAP:' . imap_last_error());
-		}
-		
 		$this->conn = $connection;
 	}
 	

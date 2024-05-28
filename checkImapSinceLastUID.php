@@ -9,10 +9,9 @@ $server = ""; // imap server url
 $acct = ""; // email address
 $pass = ""; // email password	
 
-use IMAP\Connection;
 
-try {
-	$imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
+$imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
+if ($imapConnection) {
 	$checkEmail = new IMAPEmailChecker($imapConnection);
 	
 	$messages = $checkEmail->checkSinceLastUID(4);
@@ -38,7 +37,6 @@ try {
 	} else {
 		echo "No messages found.";
 	}
-} catch (Exception $e) {
-	echo $e->getMessage();
 }
+
 ?>
