@@ -38,7 +38,7 @@ class IMAPEmailChecker
 	private $conn;
 		
 	public function __construct($connection, public int $lastuid = 0, public array $messages = []) 
-	{		
+	{	
 		$this->conn = $connection;
 	}
 	
@@ -68,6 +68,36 @@ class IMAPEmailChecker
 		return true;
 	}
 	
+	private function decodeBody(int $thismsg): string|bool
+	{
+		$structure = imap_fetchstructure($this->conn, $thismsg);
+		if (!$structure) { 
+			return false;
+		}
+		
+		$message = imap_fetchbody($this->conn,$thismsg,"2");
+		if (!$message) {
+			return false;
+		}
+		
+		if (isset($structure->parts) && is_array($structure->parts) && isset($structure->parts[1])) {
+			$part = $structure->parts[1];
+
+			if ($part->encoding == 3) {
+				$message = imap_base64($message);
+			} else if ($part->encoding == 1) {
+				$message = imap_8bit($message);
+			} else {
+				$message = quoted_printable_decode($message);
+			}
+		}
+		else {
+			return false;
+		}
+		
+		return $message;
+	}
+	
 	
 	/*
 	// this method will check the mailbox and return each email it finds as an array
@@ -78,9 +108,14 @@ class IMAPEmailChecker
 	
 		for ($i = 1; $i <= $msg_count; $i++) {
 			$header = imap_headerinfo($this->conn, $i);
-		
+			
+			$message = $this->decodeBody($i);
+			if (!$message) {
+				continue;
+			}
+			
 			$this->messages[$i]['subject'] = $header->Subject;
-			$this->messages[$i]['message_body'] = imap_fetchbody($this->conn, $i, "2");
+			$this->messages[$i]['message_body'] = $message;
 			$this->messages[$i]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$i]['from'] = $header->fromaddress;
 			$this->messages[$i]['message_number'] = $header->Msgno;
@@ -90,7 +125,7 @@ class IMAPEmailChecker
 			if (property_exists($header,"Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
 				$thisbid = $matches[0];
 			}
-			$this->messages[$i]['bid'] = $thisbid;
+			$this->messages[$i]['bid'] = str_replace("#","",$thisbid);
 			
 			$this->messages[$i]['unseen'] = $header->Unseen;			
 		}
@@ -118,8 +153,13 @@ class IMAPEmailChecker
 		foreach ($search as $thismsg) {
 			$header = imap_headerinfo($this->conn, $thismsg);
 		
+			$message = $this->decodeBody($thismsg);
+			if (!$message) {
+				continue;
+			}
+			
 			$this->messages[$thismsg]['subject'] = $header->Subject;
-			$this->messages[$thismsg]['message_body'] = imap_fetchbody($this->conn, $thismsg, "2");
+			$this->messages[$thismsg]['message_body'] = $message;
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$thismsg]['from'] = $header->fromaddress;
 			$this->messages[$thismsg]['message_number'] = $header->Msgno;
@@ -129,7 +169,7 @@ class IMAPEmailChecker
 			if (property_exists($header,"Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
 				$thisbid = $matches[0];
 			}				
-			$this->messages[$thismsg]['bid'] = $thisbid;
+			$this->messages[$thismsg]['bid'] = str_replace("#","",$thisbid);
 			
 			$this->messages[$thismsg]['unseen'] = $header->Unseen;
 		}
@@ -156,11 +196,15 @@ class IMAPEmailChecker
 		
 		foreach ($search as $thisuid) {
 			$thismsg = $thisuid->uid;
-						
 			$header = imap_headerinfo($this->conn, $thismsg);
 			
+			$message = $this->decodeBody($thismsg);
+			if (!$message) {
+				continue;
+			}
+			
 			$this->messages[$thismsg]['subject'] = $header->Subject;
-			$this->messages[$thismsg]['message_body'] = imap_fetchbody($this->conn, $thismsg, "2");
+			$this->messages[$thismsg]['message_body'] = $message;
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$thismsg]['from'] = $header->fromaddress;
 			$this->messages[$thismsg]['message_number'] = $header->Msgno;
@@ -170,7 +214,7 @@ class IMAPEmailChecker
 			if (property_exists($header,"Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
 				$thisbid = $matches[0];
 			}			
-			$this->messages[$thismsg]['bid'] = $thisbid;			
+			$this->messages[$thismsg]['bid'] = str_replace("#","",$thisbid);
 			
 			$this->messages[$thismsg]['unseen'] = $header->Unseen;
 		}		
