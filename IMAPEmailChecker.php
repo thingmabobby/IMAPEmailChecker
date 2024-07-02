@@ -138,7 +138,7 @@ class IMAPEmailChecker
 	
 	/*
 	// this method will search for emails since the given date from the mailbox and return each email it finds as an array
-	// $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024)
+	// $thedate needs to be a DateTime object
 	*/
 	public function checkSinceDate(DateTime $date): bool | array 
 	{
