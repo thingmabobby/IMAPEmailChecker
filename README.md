@@ -10,7 +10,7 @@ There are 3 methods available and they all return data in an array:
 		- this in theory should return all of your emails, but I haven't fully tested it in a large inbox.
   
 	checkSinceDate($thedate) 
-		- this will search for emails since the given date from the mailbox. $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024)
+		- this will search for emails since the given date from the mailbox. $thedate needs to be a DateTime object.
 
 	checkSinceLastUID($uid)
 		- this will search for emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value

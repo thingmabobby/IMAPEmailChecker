@@ -1,22 +1,28 @@
 <?php
 /*
-// show emails since specified email UID test
+show emails since specified email UID example
+
+..\email.php is an example configuration file that should include the variables assigned with your IMAP server, email account, and email password
+
+$IMAPEmailCheckerServer = "imap.yourhost.com";
+$IMAPEmailCheckerAccount = "email@domain.com";
+$IMAPEmailCheckerPassword = "yourpassword";
+
 */
 
 require_once('IMAPEmailChecker.php');
+require_once('..\email.php');
+use IMAPEmailChecker\IMAPEmailChecker;
 
-$server = ""; // imap server url
-$acct = ""; // email address
-$pass = ""; // email password	
-
-
-$imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
+$imapConnection = @imap_open("{" . $IMAPEmailCheckerServer . "}", $IMAPEmailCheckerAccount, $IMAPEmailCheckerPassword);
 if (!$imapConnection) {
 	echo "Error connecting to IMAP mailbox!";
 } else {
 	$checkEmail = new IMAPEmailChecker($imapConnection);
-	
-	$messages = $checkEmail->checkSinceLastUID(4);
+
+	// lastUID represents the email ID that you want to start searching from until present time
+	$lastUID = 4;
+	$messages = $checkEmail->checkSinceLastUID($lastUID);
 
 	if ($messages) {
 		echo "<h2>Emails found: " . count($messages) . "</h2>";

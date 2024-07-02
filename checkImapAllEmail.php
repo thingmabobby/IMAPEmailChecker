@@ -1,15 +1,20 @@
 <?php
 /* 
-// show all emails test 
+show all emails example 
+
+..\email.php is an example configuration file that should include the variables assigned with your IMAP server, email account, and email password
+
+$IMAPEmailCheckerServer = "imap.yourhost.com";
+$IMAPEmailCheckerAccount = "email@domain.com";
+$IMAPEmailCheckerPassword = "yourpassword";
+
 */
 
 require_once('IMAPEmailChecker.php');
+require_once('..\email.php');
+use IMAPEmailChecker\IMAPEmailChecker;
 
-$server = ""; // imap server url
-$acct = ""; // email address
-$pass = ""; // email password	
-
-$imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
+$imapConnection = @imap_open("{" . $IMAPEmailCheckerServer . "}", $IMAPEmailCheckerAccount, $IMAPEmailCheckerPassword);
 if (!$imapConnection) {
 	echo "Error connecting to IMAP mailbox!";
 } else {

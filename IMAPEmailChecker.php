@@ -14,7 +14,7 @@
 //		- this in theory should return all of your emails, but I haven't fully tested it in a large inbox.
 //  
 //	checkSinceDate($thedate) 
-//		- this will search for emails since the given date from the mailbox. $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024).
+//		- this will search for emails since the given date from the mailbox. $thedate needs to be a DateTime object.
 //
 //	checkSinceLastUID($uid)
 //		- this will search for emails since the last specified email number (UID) - ideally you would save whatever the last UID was so you can lookup the new emails the next time using that value.
@@ -32,6 +32,8 @@
 */
 
 declare(strict_types=1);
+namespace IMAPEmailChecker;
+use \DateTime;
 
 class IMAPEmailChecker
 {	
@@ -51,7 +53,7 @@ class IMAPEmailChecker
 	}
 	
 	
-	private function validateResults(array $results): bool
+	private function validateResults(array|bool $results): bool
 	{
 		if (!$results) {
 			return false;
@@ -138,12 +140,13 @@ class IMAPEmailChecker
 	// this method will search for emails since the given date from the mailbox and return each email it finds as an array
 	// $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024)
 	*/
-	public function checkSinceDate(string $thedate): bool | array 
+	public function checkSinceDate(DateTime $date): bool | array 
 	{
-		if (!isset($thedate)) { 
+		if (!isset($date)) { 
 			return false; 
 		}
 		
+		$thedate = $date->format('d M Y');
 		$search = imap_search($this->conn, "SINCE \"" . $thedate . "\"", SE_UID); 
 		
 		if (!$this->validateResults($search)) {

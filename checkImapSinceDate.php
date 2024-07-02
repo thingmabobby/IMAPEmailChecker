@@ -1,21 +1,27 @@
 <?php
 /* 
-// search by date test 
+search by date example
+
+..\email.php is an example configuration file that should include the variables assigned with your IMAP server, email account, and email password
+
+$IMAPEmailCheckerServer = "imap.yourhost.com";
+$IMAPEmailCheckerAccount = "email@domain.com";
+$IMAPEmailCheckerPassword = "yourpassword";
+
 */
 
 require_once('IMAPEmailChecker.php');
+require_once('..\email.php');
+use IMAPEmailChecker\IMAPEmailChecker;
 
-$server = ""; // imap server url
-$acct = ""; // email address
-$pass = ""; // email password	
-
-$imapConnection = @imap_open("{" . $server . "}", $acct, $pass);
+$imapConnection = @imap_open("{" . $IMAPEmailCheckerServer . "}", $IMAPEmailCheckerAccount, $IMAPEmailCheckerPassword);
 if (!$imapConnection) {
 	echo "Error connecting to IMAP mailbox!";
 } else {
 	$checkEmail = new IMAPEmailChecker($imapConnection);
 
-	$thedate = "24 May 2024";
+	// date is passed as a DateTime object
+	$thedate = new DateTime("24 May 2024", new DateTimeZone('UTC'));
 	$messages = $checkEmail->checkSinceDate($thedate);
 
 	if ($messages) {
