@@ -116,6 +116,7 @@ class IMAPEmailChecker
 				continue;
 			}
 			
+			$this->messages[$i]['message_id'] = htmlentities($header->message_id);
 			$this->messages[$i]['subject'] = $header->Subject;
 			$this->messages[$i]['message_body'] = $message;
 			$this->messages[$i]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
@@ -161,6 +162,7 @@ class IMAPEmailChecker
 				continue;
 			}
 			
+			$this->messages[$thismsg]['message_id'] = htmlentities($header->message_id);
 			$this->messages[$thismsg]['subject'] = $header->Subject;
 			$this->messages[$thismsg]['message_body'] = $message;
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
@@ -206,6 +208,7 @@ class IMAPEmailChecker
 				continue;
 			}
 			
+			$this->messages[$thismsg]['message_id'] = htmlentities($header->message_id);
 			$this->messages[$thismsg]['subject'] = $header->Subject;
 			$this->messages[$thismsg]['message_body'] = $message;
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
