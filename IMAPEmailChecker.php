@@ -29,6 +29,12 @@
 //			-> from - the friendly name (e.g. Jon Doe)
 //			-> message_number - the unique ID of the message (UID) from the mailbox
 //			-> date - the date and time with UTC difference the message was sent (e.g. Fri, 24 May 2024 15:53:38 -0400)
+//			-> to - an array of email addresses in the "to" line
+//			-> tocount - count of how many "to" addresses there are
+//			-> cc - an array of email addresses in the "cc" line
+//			-> cccount - count of how many "cc" addresses there are
+//			-> bcc - an array of email addresses in the "bcc" line
+//			-> bcccount - count of how many "bcc" addresses there are
 */
 
 declare(strict_types=1);
@@ -92,12 +98,43 @@ class IMAPEmailChecker
 			} else {
 				$message = quoted_printable_decode($message);
 			}
-		}
-		else {
+		} else {
 			return false;
 		}
 		
 		return $message;
+	}
+	
+	
+	private function getRecipientAddresses(string $type, int $thismsg, \stdClass $rfc_header): array|bool
+	{
+		
+		if ($type != "to" && $type != "cc" && $type != "bcc") { 
+			return false; 
+		}
+		if (!$thismsg || empty($thismsg) || !$rfc_header || empty($rfc_header)) { 
+			return false; 
+		}
+		
+		$toaddresses = [];
+		
+		if ($type == "to") {
+			foreach ($rfc_header->to as $thisto) {
+				$toaddresses[] = $thisto->mailbox . "@" . $thisto->host;
+			}
+		}
+		if ($type == "cc") {
+			foreach ($rfc_header->cc as $thisto) {
+				$toaddresses[] = $thisto->mailbox . "@" . $thisto->host;
+			}
+		}
+		if ($type == "bcc") {
+			foreach ($rfc_header->bcc as $thisto) {
+				$toaddresses[] = $thisto->mailbox . "@" . $thisto->host;
+			}
+		}
+		
+		return $toaddresses;		
 	}
 	
 	
@@ -107,9 +144,14 @@ class IMAPEmailChecker
 	public function checkAllEmail(): array 
 	{	
 		$msg_count = imap_num_msg($this->conn);
+		
+		imap_headers($this->conn);
 	
 		for ($i = 1; $i <= $msg_count; $i++) {
 			$header = imap_headerinfo($this->conn, $i);
+			
+			// had to do this because the original $header would only show me the 1st to address/cc address/bcc address instead of returning all of them like the docs said
+			$rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $i));
 			
 			$message = $this->decodeBody($i);
 			if (!$message) {
@@ -119,6 +161,24 @@ class IMAPEmailChecker
 			$this->messages[$i]['message_id'] = htmlentities($header->message_id);
 			$this->messages[$i]['subject'] = $header->Subject;
 			$this->messages[$i]['message_body'] = $message;
+			
+			if (isset($rfc_header->to)) {
+				$this->messages[$i]['tocount'] = count($rfc_header->to);
+				$this->messages[$i]['to'] = $this->getRecipientAddresses("to",$i,$rfc_header);
+			}
+			
+			if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
+				$this->messages[$i]['cccount'] = count($rfc_header->cc);
+				$this->messages[$i]['cc'] = $this->getRecipientAddresses("cc",$i,$rfc_header);
+			}
+
+			if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
+				$this->messages[$i]['bcccount'] = count($rfc_header->bcc);
+				$this->messages[$i]['bcc'] = $this->getRecipientAddresses("bcc",$i,$rfc_header);
+			}
+			
+			$this->messages[$i]['cc'] = $header->cc;
+			$this->messages[$i]['bcc'] = $header->bcc;
 			$this->messages[$i]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$i]['from'] = $header->fromaddress;
 			$this->messages[$i]['message_number'] = $header->Msgno;
@@ -139,7 +199,7 @@ class IMAPEmailChecker
 	
 	/*
 	// this method will search for emails since the given date from the mailbox and return each email it finds as an array
-	// $thedate needs to be a DateTime object
+	// $thedate needs to be in a string of date format: "d M Y" (e.g. 24 May 2024)
 	*/
 	public function checkSinceDate(DateTime $date): bool | array 
 	{
@@ -153,10 +213,15 @@ class IMAPEmailChecker
 		if (!$this->validateResults($search)) {
 			return false;
 		}
-				
+		
+		imap_headers($this->conn);
+		
 		foreach ($search as $thismsg) {
 			$header = imap_headerinfo($this->conn, $thismsg);
-		
+			
+			// had to do this because the original $header would only show me the 1st to address/cc address/bcc address instead of returning all of them like the docs said
+			$rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $thismsg));
+			
 			$message = $this->decodeBody($thismsg);
 			if (!$message) {
 				continue;
@@ -165,6 +230,24 @@ class IMAPEmailChecker
 			$this->messages[$thismsg]['message_id'] = htmlentities($header->message_id);
 			$this->messages[$thismsg]['subject'] = $header->Subject;
 			$this->messages[$thismsg]['message_body'] = $message;
+			
+			if (isset($rfc_header->to)) {
+				$this->messages[$thismsg]['tocount'] = count($rfc_header->to);
+				$this->messages[$thismsg]['to'] = $this->getRecipientAddresses("to",$thismsg,$rfc_header);
+			}
+			
+			if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
+				$this->messages[$thismsg]['cccount'] = count($rfc_header->cc);
+				$this->messages[$thismsg]['cc'] = $this->getRecipientAddresses("cc",$thismsg,$rfc_header);
+			}
+
+			if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
+				$this->messages[$thismsg]['bcccount'] = count($rfc_header->bcc);
+				$this->messages[$thismsg]['bcc'] = $this->getRecipientAddresses("bcc",$thismsg,$rfc_header);
+			}
+			
+			$this->messages[$thismsg]['cc'] = $header->cc;
+			$this->messages[$thismsg]['bcc'] = $header->bcc;
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$thismsg]['from'] = $header->fromaddress;
 			$this->messages[$thismsg]['message_number'] = $header->Msgno;
@@ -199,9 +282,14 @@ class IMAPEmailChecker
 			return false;
 		}
 		
+		imap_headers($this->conn);
+		
 		foreach ($search as $thisuid) {
 			$thismsg = $thisuid->uid;
 			$header = imap_headerinfo($this->conn, $thismsg);
+			
+			// had to do this because the original $header would only show me the 1st to address/cc address/bcc address instead of returning all of them like the docs said
+			$rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $thismsg));			
 			
 			$message = $this->decodeBody($thismsg);
 			if (!$message) {
@@ -211,6 +299,22 @@ class IMAPEmailChecker
 			$this->messages[$thismsg]['message_id'] = htmlentities($header->message_id);
 			$this->messages[$thismsg]['subject'] = $header->Subject;
 			$this->messages[$thismsg]['message_body'] = $message;
+			
+			if (isset($rfc_header->to)) {
+				$this->messages[$thismsg]['tocount'] = count($rfc_header->to);
+				$this->messages[$thismsg]['to'] = $this->getRecipientAddresses("to",$thismsg,$rfc_header);
+			}
+			
+			if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
+				$this->messages[$thismsg]['cccount'] = count($rfc_header->cc);
+				$this->messages[$thismsg]['cc'] = $this->getRecipientAddresses("cc",$thismsg,$rfc_header);
+			}
+
+			if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
+				$this->messages[$thismsg]['bcccount'] = count($rfc_header->bcc);
+				$this->messages[$thismsg]['bcc'] = $this->getRecipientAddresses("bcc",$thismsg,$rfc_header);
+			}
+
 			$this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
 			$this->messages[$thismsg]['from'] = $header->fromaddress;
 			$this->messages[$thismsg]['message_number'] = $header->Msgno;

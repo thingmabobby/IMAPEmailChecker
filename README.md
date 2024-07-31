@@ -27,3 +27,9 @@ Public Properties:
 		-> from - the friendly name (e.g. Jon Doe)
 		-> message_number - the unique ID of the message (UID) from the mailbox
 		-> date - the date and time with UTC difference the message was sent (e.g. Fri, 24 May 2024 15:53:38 -0400)
+		-> to - an array of email addresses in the "to" line
+		-> tocount - count of how many "to" addresses there are
+		-> cc - an array of email addresses in the "cc" line
+		-> cccount - count of how many "cc" addresses there are
+		-> bcc - an array of email addresses in the "bcc" line
+		-> bcccount - count of how many "bcc" addresses there are
