@@ -352,8 +352,8 @@ class IMAPEmailChecker
 			
 			$this->messages[$thismsg]['unseen'] = $header->Unseen;
 			
-			$attachments = $this->checkForAttachments($i);
-			$this->messages[$i]['attachments'] = $attachments;
+			$attachments = $this->checkForAttachments($thismsg);
+			$this->messages[$thismsg]['attachments'] = $attachments;
 		}
 		
 		return $this->messages;
@@ -422,8 +422,8 @@ class IMAPEmailChecker
 			
 			$this->messages[$thismsg]['unseen'] = $header->Unseen;
 			
-			$attachments = $this->checkForAttachments($i);
-			$this->messages[$i]['attachments'] = $attachments;
+			$attachments = $this->checkForAttachments($thismsg);
+			$this->messages[$thismsg]['attachments'] = $attachments;
 		}		
 		$this->lastuid = $thismsg;		
 		

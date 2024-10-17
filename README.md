@@ -33,3 +33,4 @@ Public Properties:
 		-> cccount - count of how many "cc" addresses there are
 		-> bcc - an array of email addresses in the "bcc" line
 		-> bcccount - count of how many "bcc" addresses there are
+		-> attachments - associative array with the following fields: filename, content, type
