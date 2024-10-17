@@ -35,6 +35,7 @@
 //			-> cccount - count of how many "cc" addresses there are
 //			-> bcc - an array of email addresses in the "bcc" line
 //			-> bcccount - count of how many "bcc" addresses there are
+//			-> attachments - associative array with the following fields: filename, content, type
 */
 
 declare(strict_types=1);
@@ -79,30 +80,117 @@ class IMAPEmailChecker
 	private function decodeBody(int $thismsg): string|bool
 	{
 		$structure = imap_fetchstructure($this->conn, $thismsg);
-		if (!$structure) { 
-			return false;
-		}
-		
-		$message = imap_fetchbody($this->conn,$thismsg,"2");
-		if (!$message) {
-			return false;
-		}
-		
-		if (isset($structure->parts) && is_array($structure->parts) && isset($structure->parts[1])) {
-			$part = $structure->parts[1];
 
-			if ($part->encoding == 3) {
-				$message = imap_base64($message);
-			} else if ($part->encoding == 1) {
-				$message = imap_8bit($message);
+		if (!$structure) {
+			return false;
+		}
+
+		$messageParts = [];
+		$hasHtml = false; // Track if HTML has been added
+
+		// Function to recursively decode parts
+		$decodePart = function($part, $partNum) use (&$decodePart, $thismsg, &$messageParts, &$hasHtml) {
+			// Check if the part is an attachment
+			if (isset($part->disposition) && strtolower($part->disposition) === 'attachment') {
+				return; // Skip attachments
+			}
+
+			// Construct the section string for imap_fetchbody
+			$partIndex = (string)$partNum; // Ensure partNum is a string
+			$body = imap_fetchbody($this->conn, $thismsg, $partIndex);
+
+			// Handle encoding for this part
+			switch ($part->encoding) {
+				case 0:  // 7bit
+					break;  // No decoding necessary
+				case 1:  // 8bit
+					$body = imap_8bit($body);
+					break;
+				case 2:  // Binary
+					break;  // Binary data, no decoding necessary
+				case 3:  // Base64
+					$body = imap_base64($body);
+					break;
+				case 4:  // Quoted-Printable
+					$body = quoted_printable_decode($body);
+					break;
+				default:
+					break;  // Unknown encoding
+			}
+
+			// Check if the part is multipart
+			if (isset($part->parts) && is_array($part->parts)) {
+				foreach ($part->parts as $subIndex => $subPart) {
+					$decodePart($subPart, $partNum . '.' . ($subIndex + 1)); // Recursive call with updated part number
+				}
 			} else {
-				$message = quoted_printable_decode($message);
+				// Prefer HTML over plain text
+				if (stripos($part->subtype, 'html') !== false) {
+					// Always add HTML if it is found
+					$messageParts = [$body]; // Overwrite any existing parts with HTML
+					$hasHtml = true; // Mark that we have added HTML
+				} elseif (stripos($part->subtype, 'plain') !== false) {
+					if (!$hasHtml) { // Only add plain text if no HTML has been added yet
+						$messageParts[] = $body; 
+					} 
+				}
+			}
+		};
+
+		// Start decoding the main parts
+		if (isset($structure->parts)) {
+			foreach ($structure->parts as $index => $part) {
+				$decodePart($part, $index + 1); // Start with a 1-based index
 			}
 		} else {
-			return false;
+			// Handle the case for single part messages
+			$decodePart($structure, 1); // Treat the entire structure as a single part
 		}
-		
-		return $message;
+
+		// Join all parts for multipart messages, separating with new lines
+		$message = implode("\n", $messageParts);
+
+		// Return trimmed message to avoid leading/trailing whitespace
+		return trim($message) ?: false;
+	}
+	
+	
+	private function checkForAttachments(int $thismsg): array
+	{
+		$structure = imap_fetchstructure($this->conn, $thismsg);
+		$attachments = [];
+
+		if (isset($structure->parts) && is_array($structure->parts)) {
+			for ($i = 0; $i < count($structure->parts); $i++) {
+				$part = $structure->parts[$i];
+				
+				// Check if the part is an attachment
+				if (isset($part->disposition) && strtolower($part->disposition) === 'attachment') {
+					// Get attachment details
+					$filename = isset($part->dparameters[0]->value) ? $part->dparameters[0]->value : 'unknown';
+					$content = imap_fetchbody($this->conn, $thismsg, (string)($i + 1)); // parts are 1-indexed
+					
+					// Decode content based on encoding
+					switch ($part->encoding) {
+						case 3:  // Base64
+							$content = imap_base64($content);
+							break;
+						case 4:  // Quoted-printable
+							$content = quoted_printable_decode($content);
+							break;
+					}
+
+					// Add attachment to the list
+					$attachments[] = [
+						'filename' => $filename,
+						'content' => $content,
+						'type' => $part->subtype,
+					];
+				}
+			}
+		}
+
+		return $attachments;
 	}
 	
 	
@@ -190,7 +278,10 @@ class IMAPEmailChecker
 			}
 			$this->messages[$i]['bid'] = str_replace("#","",$thisbid);
 			
-			$this->messages[$i]['unseen'] = $header->Unseen;			
+			$this->messages[$i]['unseen'] = $header->Unseen;
+
+			$attachments = $this->checkForAttachments($i);
+			$this->messages[$i]['attachments'] = $attachments;			
 		}
 		
 		return $this->messages;
@@ -260,6 +351,9 @@ class IMAPEmailChecker
 			$this->messages[$thismsg]['bid'] = str_replace("#","",$thisbid);
 			
 			$this->messages[$thismsg]['unseen'] = $header->Unseen;
+			
+			$attachments = $this->checkForAttachments($i);
+			$this->messages[$i]['attachments'] = $attachments;
 		}
 		
 		return $this->messages;
@@ -327,6 +421,9 @@ class IMAPEmailChecker
 			$this->messages[$thismsg]['bid'] = str_replace("#","",$thisbid);
 			
 			$this->messages[$thismsg]['unseen'] = $header->Unseen;
+			
+			$attachments = $this->checkForAttachments($i);
+			$this->messages[$i]['attachments'] = $attachments;
 		}		
 		$this->lastuid = $thismsg;		
 		
