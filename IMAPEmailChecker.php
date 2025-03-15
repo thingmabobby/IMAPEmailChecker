@@ -86,6 +86,7 @@ class IMAPEmailChecker
      * Decodes the body of an email message.
      *
      * This method recursively processes MIME parts, preferring HTML over plain text.
+     * It also converts the content to UTF-8 based on the charset specified in the part parameters.
      *
      * @param int $thismsg The message number (1-indexed).
      * @return string|bool The decoded message body or false if decoding fails.
@@ -132,6 +133,20 @@ class IMAPEmailChecker
                     break;
                 default:
                     break;
+            }
+
+            // Convert the decoded body to UTF-8 using the charset parameter if available.
+            $charset = 'UTF-8'; // default charset
+            if (isset($part->parameters) && is_array($part->parameters)) {
+                foreach ($part->parameters as $param) {
+                    if (strtolower($param->attribute) === 'charset') {
+                        $charset = $param->value;
+                        break;
+                    }
+                }
+            }
+            if (strtoupper($charset) !== 'UTF-8') {
+                $body = mb_convert_encoding($body, 'UTF-8', $charset);
             }
 
             // If the part is multipart, process its subparts recursively
@@ -294,6 +309,59 @@ class IMAPEmailChecker
     }
 
     /**
+     * Processes an individual email message and returns its data as an associative array.
+     *
+     * @param int $msgId The message number (or UID) to process.
+     * @return array|null The processed message data, or null if decoding fails.
+     */
+    private function processMessage(int $msgId): ?array
+    {
+        $header = imap_headerinfo($this->conn, $msgId);
+        $rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $msgId));
+        $message = $this->decodeBody($msgId);
+        if (!$message) {
+            return null;
+        }
+        $attachments = $this->checkForAttachments($msgId);
+        $message = $this->embedInlineImages($message, $attachments);
+
+        $processed = [];
+        $processed['message_id'] = htmlentities($header->message_id);
+        $processed['subject'] = mb_decode_mimeheader($header->Subject);
+        $processed['message_body'] = $message;
+
+        if (isset($rfc_header->to)) {
+            $processed['tocount'] = count($rfc_header->to);
+            $processed['to'] = $this->getRecipientAddresses("to", $msgId, $rfc_header);
+        }
+        if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
+            $processed['cccount'] = count($rfc_header->cc);
+            $processed['cc'] = $this->getRecipientAddresses("cc", $msgId, $rfc_header);
+        }
+        if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
+            $processed['bcccount'] = count($rfc_header->bcc);
+            $processed['bcc'] = $this->getRecipientAddresses("bcc", $msgId, $rfc_header);
+        }
+
+        // Overwrite cc and bcc with header values
+        $processed['cc'] = $header->cc;
+        $processed['bcc'] = $header->bcc;
+        $processed['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
+        $processed['from'] = $header->fromaddress;
+        $processed['message_number'] = $header->Msgno;
+        $processed['date'] = $header->date;
+        $thisbid = "n/a";
+        if (property_exists($header, "Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
+            $thisbid = $matches[0];
+        }
+        $processed['bid'] = str_replace("#", "", $thisbid);
+        $processed['unseen'] = $header->Unseen;
+        $processed['attachments'] = $attachments;
+
+        return $processed;
+    }
+
+    /**
      * Retrieves all emails from the mailbox.
      *
      * For each email, it decodes the body, retrieves attachments, embeds inline images,
@@ -307,50 +375,10 @@ class IMAPEmailChecker
         imap_headers($this->conn);
 
         for ($i = 1; $i <= $msg_count; $i++) {
-            $header = imap_headerinfo($this->conn, $i);
-            $rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $i));
-
-            $message = $this->decodeBody($i);
-            if (!$message) {
-                continue;
+            $processed = $this->processMessage($i);
+            if ($processed !== null) {
+                $this->messages[$i] = $processed;
             }
-
-            // Retrieve attachments including inline images.
-            $attachments = $this->checkForAttachments($i);
-            // Replace CID references with embedded inline images.
-            $message = $this->embedInlineImages($message, $attachments);
-
-            $this->messages[$i]['message_id'] = htmlentities($header->message_id);
-            $this->messages[$i]['subject'] = $header->Subject;
-            $this->messages[$i]['message_body'] = $message;
-
-            if (isset($rfc_header->to)) {
-                $this->messages[$i]['tocount'] = count($rfc_header->to);
-                $this->messages[$i]['to'] = $this->getRecipientAddresses("to", $i, $rfc_header);
-            }
-            if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
-                $this->messages[$i]['cccount'] = count($rfc_header->cc);
-                $this->messages[$i]['cc'] = $this->getRecipientAddresses("cc", $i, $rfc_header);
-            }
-            if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
-                $this->messages[$i]['bcccount'] = count($rfc_header->bcc);
-                $this->messages[$i]['bcc'] = $this->getRecipientAddresses("bcc", $i, $rfc_header);
-            }
-
-            $this->messages[$i]['cc'] = $header->cc;
-            $this->messages[$i]['bcc'] = $header->bcc;
-            $this->messages[$i]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
-            $this->messages[$i]['from'] = $header->fromaddress;
-            $this->messages[$i]['message_number'] = $header->Msgno;
-            $this->messages[$i]['date'] = $header->date;
-
-            $thisbid = "n/a";
-            if (property_exists($header, "Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
-                $thisbid = $matches[0];
-            }
-            $this->messages[$i]['bid'] = str_replace("#", "", $thisbid);
-            $this->messages[$i]['unseen'] = $header->Unseen;
-            $this->messages[$i]['attachments'] = $attachments;
         }
 
         return $this->messages;
@@ -377,49 +405,11 @@ class IMAPEmailChecker
         }
 
         imap_headers($this->conn);
-        foreach ($search as $thismsg) {
-            $header = imap_headerinfo($this->conn, $thismsg);
-            $rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $thismsg));
-
-            $message = $this->decodeBody($thismsg);
-            if (!$message) {
-                continue;
+        foreach ($search as $msgId) {
+            $processed = $this->processMessage($msgId);
+            if ($processed !== null) {
+                $this->messages[$msgId] = $processed;
             }
-
-            $attachments = $this->checkForAttachments($thismsg);
-            $message = $this->embedInlineImages($message, $attachments);
-
-            $this->messages[$thismsg]['message_id'] = htmlentities($header->message_id);
-            $this->messages[$thismsg]['subject'] = $header->Subject;
-            $this->messages[$thismsg]['message_body'] = $message;
-
-            if (isset($rfc_header->to)) {
-                $this->messages[$thismsg]['tocount'] = count($rfc_header->to);
-                $this->messages[$thismsg]['to'] = $this->getRecipientAddresses("to", $thismsg, $rfc_header);
-            }
-            if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
-                $this->messages[$thismsg]['cccount'] = count($rfc_header->cc);
-                $this->messages[$thismsg]['cc'] = $this->getRecipientAddresses("cc", $thismsg, $rfc_header);
-            }
-            if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
-                $this->messages[$thismsg]['bcccount'] = count($rfc_header->bcc);
-                $this->messages[$thismsg]['bcc'] = $this->getRecipientAddresses("bcc", $thismsg, $rfc_header);
-            }
-
-            $this->messages[$thismsg]['cc'] = $header->cc;
-            $this->messages[$thismsg]['bcc'] = $header->bcc;
-            $this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
-            $this->messages[$thismsg]['from'] = $header->fromaddress;
-            $this->messages[$thismsg]['message_number'] = $header->Msgno;
-            $this->messages[$thismsg]['date'] = $header->date;
-
-            $thisbid = "n/a";
-            if (property_exists($header, "Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
-                $thisbid = $matches[0];
-            }
-            $this->messages[$thismsg]['bid'] = str_replace("#", "", $thisbid);
-            $this->messages[$thismsg]['unseen'] = $header->Unseen;
-            $this->messages[$thismsg]['attachments'] = $attachments;
         }
 
         return $this->messages;
@@ -445,52 +435,16 @@ class IMAPEmailChecker
         }
 
         imap_headers($this->conn);
-        foreach ($search as $thisuid) {
-            $thismsg = $thisuid->uid;
-            $header = imap_headerinfo($this->conn, $thismsg);
-            $rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $thismsg));
-
-            $message = $this->decodeBody($thismsg);
-            if (!$message) {
-                continue;
+        foreach ($search as $overview) {
+            $msgId = $overview->uid;
+            $processed = $this->processMessage($msgId);
+            if ($processed !== null) {
+                $this->messages[$msgId] = $processed;
             }
-
-            $attachments = $this->checkForAttachments($thismsg);
-            $message = $this->embedInlineImages($message, $attachments);
-
-            $this->messages[$thismsg]['message_id'] = htmlentities($header->message_id);
-            $this->messages[$thismsg]['subject'] = $header->Subject;
-            $this->messages[$thismsg]['message_body'] = $message;
-
-            if (isset($rfc_header->to)) {
-                $this->messages[$thismsg]['tocount'] = count($rfc_header->to);
-                $this->messages[$thismsg]['to'] = $this->getRecipientAddresses("to", $thismsg, $rfc_header);
-            }
-            if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
-                $this->messages[$thismsg]['cccount'] = count($rfc_header->cc);
-                $this->messages[$thismsg]['cc'] = $this->getRecipientAddresses("cc", $thismsg, $rfc_header);
-            }
-            if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
-                $this->messages[$thismsg]['bcccount'] = count($rfc_header->bcc);
-                $this->messages[$thismsg]['bcc'] = $this->getRecipientAddresses("bcc", $thismsg, $rfc_header);
-            }
-
-            $this->messages[$thismsg]['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
-            $this->messages[$thismsg]['from'] = $header->fromaddress;
-            $this->messages[$thismsg]['message_number'] = $header->Msgno;
-            $this->messages[$thismsg]['date'] = $header->date;
-
-            $thisbid = "n/a";
-            if (property_exists($header, "Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
-                $thisbid = $matches[0];
-            }
-            $this->messages[$thismsg]['bid'] = str_replace("#", "", $thisbid);
-            $this->messages[$thismsg]['unseen'] = $header->Unseen;
-            $this->messages[$thismsg]['attachments'] = $attachments;
         }
 
         // Update lastuid with the last processed message UID.
-        $this->lastuid = $thismsg;
+        $this->lastuid = $msgId;
 
         return $this->messages;
     }
