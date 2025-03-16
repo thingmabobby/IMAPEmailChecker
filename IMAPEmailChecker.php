@@ -344,10 +344,34 @@ class IMAPEmailChecker
         }
 
         // Overwrite cc and bcc with header values
-        $processed['cc'] = $header->cc;
-        $processed['bcc'] = $header->bcc;
+        if (isset($header->cc) && is_array($header->cc)) {
+            $ccs = [];
+            foreach ($header->cc as $cc) {
+                $ccs[] = $cc->mailbox . "@" . $cc->host;
+            }
+            $processed['cc'] = $ccs;
+        } else {
+            $processed['cc'] = [];
+        }
+        
+        if (isset($header->bcc) && is_array($header->bcc)) {
+            $bccs = [];
+            foreach ($header->bcc as $bcc) {
+                $bccs[] = $bcc->mailbox . "@" . $bcc->host;
+            }
+            $processed['bcc'] = $bccs;
+        } else {
+            $processed['bcc'] = [];
+        }
+        
         $processed['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
-        $processed['from'] = $header->fromaddress;
+
+        $senderName = '';
+        if (isset($header->sender[0]) && isset($header->sender[0]->personal)) {
+            $senderName = mb_decode_mimeheader($header->sender[0]->personal);
+        }
+        $processed['from'] = $senderName ?: $header->fromaddress;
+
         $processed['message_number'] = $header->Msgno;
         $processed['date'] = $header->date;
         $thisbid = "n/a";
