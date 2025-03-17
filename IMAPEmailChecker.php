@@ -311,18 +311,25 @@ class IMAPEmailChecker
     /**
      * Processes an individual email message and returns its data as an associative array.
      *
-     * @param int $msgId The message number (or UID) to process.
+     * @param int $msgId The message UID to process.
      * @return array|null The processed message data, or null if decoding fails.
      */
     private function processMessage(int $msgId): ?array
     {
-        $header = imap_headerinfo($this->conn, $msgId);
-        $rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $msgId));
-        $message = $this->decodeBody($msgId);
+        // Convert UID to sequence number if needed.
+        $msgno = imap_msgno($this->conn, $msgId);
+        if ($msgno === 0) {
+            // If conversion fails, assume $msgId is already a valid sequence number.
+            $msgno = $msgId;
+        }
+
+        $header = imap_headerinfo($this->conn, $msgno);
+        $rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $msgno));
+        $message = $this->decodeBody($msgno);
         if (!$message) {
             return null;
         }
-        $attachments = $this->checkForAttachments($msgId);
+        $attachments = $this->checkForAttachments($msgno);
         $message = $this->embedInlineImages($message, $attachments);
 
         $processed = [];
@@ -332,18 +339,18 @@ class IMAPEmailChecker
 
         if (isset($rfc_header->to)) {
             $processed['tocount'] = count($rfc_header->to);
-            $processed['to'] = $this->getRecipientAddresses("to", $msgId, $rfc_header);
+            $processed['to'] = $this->getRecipientAddresses("to", $msgno, $rfc_header);
         }
         if (isset($rfc_header->cc) && !empty($rfc_header->cc)) {
             $processed['cccount'] = count($rfc_header->cc);
-            $processed['cc'] = $this->getRecipientAddresses("cc", $msgId, $rfc_header);
+            $processed['cc'] = $this->getRecipientAddresses("cc", $msgno, $rfc_header);
         }
         if (isset($rfc_header->bcc) && !empty($rfc_header->bcc)) {
             $processed['bcccount'] = count($rfc_header->bcc);
-            $processed['bcc'] = $this->getRecipientAddresses("bcc", $msgId, $rfc_header);
+            $processed['bcc'] = $this->getRecipientAddresses("bcc", $msgno, $rfc_header);
         }
 
-        // Overwrite cc and bcc with header values
+        // Overwrite cc and bcc with header values if available.
         if (isset($header->cc) && is_array($header->cc)) {
             $ccs = [];
             foreach ($header->cc as $cc) {
@@ -381,6 +388,9 @@ class IMAPEmailChecker
         $processed['bid'] = str_replace("#", "", $thisbid);
         $processed['unseen'] = $header->Unseen;
         $processed['attachments'] = $attachments;
+
+        // Add the UID to the processed array using the sequence number.
+        $processed['uid'] = imap_uid($this->conn, $msgno);
 
         return $processed;
     }
@@ -471,5 +481,44 @@ class IMAPEmailChecker
         $this->lastuid = $msgId;
 
         return $this->messages;
+    }
+
+    /**
+     * Deletes an email from the mailbox.
+     *
+     * This method marks the specified email for deletion and then expunges the mailbox.
+     *
+     * @param int $msgIdentifier The UID of the email to delete.
+     * @return bool True on success, false on failure.
+     */
+    public function deleteEmail(int $msgIdentifier): bool
+    {
+        if (!imap_delete($this->conn, (string)$msgIdentifier, FT_UID)) {
+            return false;
+        }
+
+        // Permanently remove emails marked for deletion.
+        return imap_expunge($this->conn);
+    }
+
+    /**
+     * Archives an email by moving it to a specified folder.
+     *
+     * This method moves the email from the current mailbox to the target archive folder
+     * and then expunges the mailbox to remove the email from its original location.
+     *
+     * @param int    $msgIdentifier The UID of the email to archive.
+     * @param string $archiveFolder The target folder where the email should be moved (default is "Archive").
+     * @return bool True on success, false on failure.
+     */
+    public function archiveEmail(int $msgIdentifier, string $archiveFolder = 'Archive'): bool
+    {
+        // Move the email to the archive folder using CP_UID flag.
+        if (!imap_mail_move($this->conn, (string)$msgIdentifier, $archiveFolder, CP_UID)) {
+            return false;
+        }
+
+        // Remove the moved email from the current mailbox.
+        return imap_expunge($this->conn);
     }
 }
