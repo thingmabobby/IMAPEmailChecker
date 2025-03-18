@@ -325,10 +325,12 @@ class IMAPEmailChecker
 
         $header = imap_headerinfo($this->conn, $msgno);
         $rfc_header = imap_rfc822_parse_headers(imap_fetchheader($this->conn, $msgno));
+        
         $message = $this->decodeBody($msgno);
         if (!$message) {
             return null;
         }
+
         $attachments = $this->checkForAttachments($msgno);
         $message = $this->embedInlineImages($message, $attachments);
 
@@ -372,13 +374,11 @@ class IMAPEmailChecker
         }
         
         $processed['fromaddress'] = $header->sender[0]->mailbox . "@" . $header->sender[0]->host;
-
         $senderName = '';
         if (isset($header->sender[0]) && isset($header->sender[0]->personal)) {
             $senderName = mb_decode_mimeheader($header->sender[0]->personal);
         }
         $processed['from'] = $senderName ?: $header->fromaddress;
-
         $processed['message_number'] = $header->Msgno;
         $processed['date'] = $header->date;
         $thisbid = "n/a";
@@ -387,7 +387,13 @@ class IMAPEmailChecker
         }
         $processed['bid'] = str_replace("#", "", $thisbid);
         $processed['unseen'] = $header->Unseen;
-        $processed['attachments'] = $attachments;
+
+        // Remove inline images (which have a 'content_id') from the attachments list
+        $filteredAttachments = array_filter($attachments, function($attachment) {
+            return !isset($attachment['content_id']);
+        });
+
+        $processed['attachments'] = $filteredAttachments;
 
         // Add the UID to the processed array using the sequence number.
         $processed['uid'] = imap_uid($this->conn, $msgno);
