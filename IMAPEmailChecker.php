@@ -336,7 +336,16 @@ class IMAPEmailChecker
 
         $processed = [];
         $processed['message_id'] = htmlentities($header->message_id);
-        $processed['subject'] = mb_decode_mimeheader($header->Subject);
+
+        $decodedSubject = mb_decode_mimeheader($header->Subject);
+        $processed['subject'] = $decodedSubject;
+        
+        $thisbid = "n/a";
+        if (preg_match("/#(\d+)/", $decodedSubject, $matches)) {
+            $thisbid = $matches[0];
+        }
+        $processed['bid'] = str_replace("#", "", $thisbid);
+
         $processed['message_body'] = $message;
 
         if (isset($rfc_header->to)) {
@@ -381,11 +390,6 @@ class IMAPEmailChecker
         $processed['from'] = $senderName ?: $header->fromaddress;
         $processed['message_number'] = $header->Msgno;
         $processed['date'] = $header->date;
-        $thisbid = "n/a";
-        if (property_exists($header, "Subject") && preg_match("/#(\d+)/", $header->Subject, $matches)) {
-            $thisbid = $matches[0];
-        }
-        $processed['bid'] = str_replace("#", "", $thisbid);
         $processed['unseen'] = $header->Unseen;
 
         // Remove inline images (which have a 'content_id') from the attachments list
