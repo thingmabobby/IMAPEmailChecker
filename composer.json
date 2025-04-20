@@ -1,0 +1,29 @@
+{
+    "name": "thingmabobby/imap-email-checker",
+    "description": "A PHP class to fetch and process emails from an IMAP mailbox.",
+    "type": "library",
+    "license": "Unlicense",
+    "authors": [
+        {
+            "name": "Thingmabobby",
+            "email": "thingmabobby@gmail.com",
+            "homepage": "https://github.com/thingmabobby"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "ext-imap": "*",
+        "ext-mbstring": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "IMAPEmailChecker\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
