@@ -86,6 +86,123 @@ class IMAPEmailChecker
 
 
 	/**
+	 * Checks the status of the current mailbox, including UIDs for recent/unseen and the highest UID.
+	 *
+	 * Retrieves:
+	 * - Total number of messages.
+	 * - The highest UID currently existing in the mailbox.
+	 * - An array containing the UIDs of recent messages (\Recent flag).
+	 * - An array containing the UIDs of unseen messages (\Unseen flag).
+	 *
+	 * Note: 'Recent' messages have the \Recent flag. 'Unseen' messages have the \Unseen flag.
+	 * The highest UID is determined by finding the UID of the message with the highest sequence number.
+	 *
+	 * @return array|bool An associative array with keys 'total' (int), 'highest_uid' (int),
+	 *                    'recent_uids' (array<int>), and 'unseen_uids' (array<int>),
+	 *                    or false on failure of any required IMAP operation.
+	 *                    'highest_uid' will be 0 if the mailbox is empty.
+	 *                    Example: ['total' => 150, 'highest_uid' => 2345, 'recent_uids' => [2343, 2344, 2345], 'unseen_uids' => [2340, 2343, 2345]]
+	 */
+	public function checkMailboxStatus(): array|bool
+	{
+		$status = [
+			'total' => 0,
+			'highest_uid' => 0, // Initialize to 0 for empty mailbox case
+			'recent_uids' => [],
+			'unseen_uids' => [],
+		];
+
+		// 1. Get total count using imap_check()
+		$check = imap_check($this->conn);
+		if ($check === false || !($check instanceof \stdClass)) {
+			error_log("IMAPEmailChecker: Failed to get mailbox check status (imap_check). Error: " . imap_last_error());
+			return false;
+		}
+		$status['total'] = isset($check->Nmsgs) ? (int)$check->Nmsgs : 0;
+
+		// 2. Get highest UID using imap_uid() with the highest sequence number, if mailbox is not empty
+		if ($status['total'] > 0) {
+			// imap_uid() takes the sequence number and returns the corresponding UID
+			$highestUidResult = imap_uid($this->conn, $status['total']);
+			if ($highestUidResult === false) {
+				// This could happen if the message count changed between imap_check and imap_uid,
+				// or if the server has issues. Treat as failure.
+				error_log("IMAPEmailChecker: Failed to get UID for highest sequence number ({$status['total']}). Error: " . imap_last_error());
+				return false; // Fail if we can't get this reliably
+			}
+			$status['highest_uid'] = (int)$highestUidResult;
+		}
+		// If total is 0, highest_uid remains 0.
+
+		// 3. Get unseen UIDs using imap_search()
+		$unseenUidsResult = imap_search($this->conn, 'UNSEEN', SE_UID);
+		if ($unseenUidsResult === false) {
+			error_log("IMAPEmailChecker: Failed to search for unseen message UIDs (imap_search UNSEEN). Error: " . imap_last_error());
+			return false;
+		}
+		$status['unseen_uids'] = array_map('intval', $unseenUidsResult);
+
+		// 4. Get recent UIDs using imap_search()
+		$recentUidsResult = imap_search($this->conn, 'RECENT', SE_UID);
+		if ($recentUidsResult === false) {
+			error_log("IMAPEmailChecker: Failed to search for recent message UIDs (imap_search RECENT). Error: " . imap_last_error());
+			return false;
+		}
+		$status['recent_uids'] = array_map('intval', $recentUidsResult);
+
+		// 5. Return the combined status
+		return $status;
+	}
+
+
+	/**
+     * Performs a search on the current mailbox using custom IMAP criteria.
+     *
+     * Allows searching based on various criteria supported by the IMAP server.
+     * Refer to RFC 3501 (Section 6.4.4 SEARCH Command) for standard criteria.
+     * Common examples: 'ALL', 'UNSEEN', 'SEEN', 'ANSWERED', 'DELETED', 'FLAGGED',
+     * 'FROM "user@example.com"', 'SUBJECT "Invoice"', 'BODY "important text"',
+     * 'SINCE "1-Jan-2024"', 'BEFORE "31-Dec-2023"', 'KEYWORD "MyFlag"'.
+     *
+     * @param string $criteria   The IMAP search criteria string. Must not be empty.
+     * @param bool   $returnUids If true (default), returns an array of UIDs.
+     *                           If false, returns an array of message sequence numbers.
+     * @return array|false An array of integer UIDs or message numbers matching the criteria,
+     *                     sorted numerically. Returns an empty array if no messages match.
+     *                     Returns false if the search operation fails or criteria is empty.
+     */
+    public function search(string $criteria, bool $returnUids = true): array|false
+    {
+        // Basic validation for the criteria string
+        $trimmedCriteria = trim($criteria);
+        if ($trimmedCriteria === '') {
+            error_log("IMAPEmailChecker: Search criteria cannot be empty.");
+            return false;
+        }
+
+        // Determine the options for imap_search
+        $options = $returnUids ? SE_UID : 0; // SE_UID to return UIDs, 0 for sequence numbers
+
+        // Perform the search
+        $results = imap_search($this->conn, $trimmedCriteria, $options);
+
+        if ($results === false) {
+            // Search failed
+            error_log("IMAPEmailChecker: imap_search failed for criteria '{$trimmedCriteria}'. Error: " . imap_last_error());
+            return false;
+        }
+
+        // imap_search returns an array of integers (or false on error).
+        // If no messages match, it returns an empty array (which is not === false).
+        // Sort the results numerically for consistency.
+        sort($results, SORT_NUMERIC);
+
+        // Return the sorted array of identifiers (UIDs or sequence numbers)
+        return $results;
+    }
+
+
+	/**
 	 * Decodes the body of an email message, identified by message number or UID.
 	 *
 	 * Recursively processes MIME parts, preferring HTML over plain text.
@@ -538,6 +655,54 @@ class IMAPEmailChecker
 	}
 
 
+    /**
+     * Fetches and processes specific email messages by their identifiers (UIDs or Sequence Numbers).
+     *
+     * This method retrieves the full details for the given message identifiers.
+     * Note: This method does NOT update the main `$this->messages` or `$this->lastuid` properties
+     * of the class, as it's intended for fetching specific messages on demand, not
+     * as part of a sequence like the check* methods.
+     *
+     * @param array $identifiers An array of integer UIDs or message sequence numbers.
+     * @param bool  $isUid       True if the identifiers are UIDs (default), False if they are sequence numbers.
+     * @return array An associative array where keys are the requested identifiers (if found)
+     *               and values are the processed message data arrays (see Message Array Structure).
+     *               Messages that could not be processed (e.g., invalid ID) will be omitted.
+     */
+    public function fetchMessagesByIds(array $identifiers, bool $isUid = true): array
+    {
+        $fetchedMessages = [];
+        if (empty($identifiers)) {
+            return $fetchedMessages; // Return empty if no IDs provided
+        }
+
+        // Ensure identifiers are integers
+        $validIdentifiers = array_filter($identifiers, 'is_int');
+        if (count($validIdentifiers) !== count($identifiers)) {
+             error_log("IMAPEmailChecker: Non-integer identifier provided to fetchMessagesByIds. Only integers processed.");
+             // Continue with only the valid integers
+        }
+
+
+        foreach ($validIdentifiers as $id) {
+             if ($id <= 0) continue; // Skip potentially invalid IDs
+
+            $processed = $this->processMessage($id, $isUid); // Call the private method
+            if ($processed !== null) {
+                // Use the *actual* UID from the processed message as the key for consistency,
+                // but only if we were originally requesting by UID. If requesting by MsgNo,
+                // using the original MsgNo ($id) as key might be more intuitive here.
+                $key = $isUid ? ($processed['uid'] ?? $id) : $id;
+                $fetchedMessages[$key] = $processed;
+            } else {
+                error_log("IMAPEmailChecker: Failed to process message identifier {$id} (isUid: " . ($isUid ? 'true' : 'false') . ") during fetchMessagesByIds");
+            }
+        }
+
+        return $fetchedMessages;
+    }
+	
+
 	/**
 	 * Processes an individual email message and returns its data as an associative array.
 	 * Uses either the message sequence number or the UID.
@@ -879,6 +1044,125 @@ class IMAPEmailChecker
 
 		return $this->messages;
 	}
+
+	
+	/**
+	 * Retrieves unread emails (\Unseen flag) from the mailbox.
+	 *
+	 * For each unread email, it decodes the body, retrieves attachments, embeds inline images,
+	 * and extracts header details. Messages are stored keyed by UID.
+	 * This method uses the 'UNSEEN' search criterion.
+	 *
+	 * @return bool|array False on search failure or an array of unread emails keyed by UID.
+	 *                    Returns an empty array if no unread emails are found.
+	 */
+	public function checkUnreadEmails(): bool|array
+	{
+		$this->messages = []; // Reset messages for this specific check
+		// Keep track of the highest UID encountered in this batch to update the class property
+		$current_last_uid = $this->lastuid;
+
+		// Search for messages with the \Unseen flag. SE_UID returns UIDs.
+		// This search operation itself does not mark messages as read.
+		$uids = imap_search($this->conn, 'UNSEEN', SE_UID);
+
+		if ($uids === false) {
+			// An error occurred during search
+			error_log("IMAPEmailChecker: imap_search failed for criteria 'UNSEEN'. Error: " . imap_last_error());
+			return false; // Indicate failure
+		}
+
+		if (empty($uids)) {
+			// No unread messages found, return empty array
+			// $this->lastuid remains unchanged in this case.
+			return $this->messages;
+		}
+
+		// Sort UIDs just in case the server doesn't return them ordered
+		sort($uids, SORT_NUMERIC);
+
+		foreach ($uids as $uid) {
+			$uid = (int)$uid; // Ensure it's an integer
+			$processed = $this->processMessage($uid, true); // Process by UID
+			if ($processed !== null) {
+				$this->messages[$uid] = $processed;
+				// Update the highest UID seen in this batch
+				if ($uid > $current_last_uid) {
+					$current_last_uid = $uid;
+				}
+			} else {
+				error_log("IMAPEmailChecker: Failed to process unread message UID {$uid} during checkUnreadEmails");
+			}
+		}
+
+		// Update the class property to the highest UID processed in this run.
+		// This ensures that subsequent checkSinceLastUID calls work correctly,
+		// even if they happen after an checkUnreadEmails call.
+		$this->lastuid = $current_last_uid;
+
+		return $this->messages;
+	}
+
+
+	/**
+	 * Sets or clears the read status (\Seen flag) for one or more emails by their UIDs.
+	 *
+	 * @param array $uids         An array of integer UIDs to modify.
+	 *                            Example: [123, 456] or [$singleUid]
+	 * @param bool  $markAsRead   If true, sets the \Seen flag (marks as read).
+	 *                            If false, clears the \Seen flag (marks as unread).
+	 * @return bool True if the operation was successful for all specified UIDs, false otherwise.
+	 */
+	public function setMessageReadStatus(array $uids, bool $markAsRead): bool
+	{
+		if (empty($uids)) {
+			// No UIDs provided, nothing to do. Consider this success.
+			return true;
+		}
+
+		// Basic validation: Ensure all UIDs are positive integers
+		$validatedUids = [];
+		foreach ($uids as $uid) {
+			// Ensure it's an integer and positive
+			if (filter_var($uid, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) !== false) {
+				$validatedUids[] = (int)$uid;
+			} else {
+				error_log("IMAPEmailChecker: Invalid UID provided in setMessageReadStatus: " . var_export($uid, true));
+				// Fail the whole operation if any UID is invalid
+				return false;
+			}
+		}
+
+		// If validation removed all UIDs (e.g., all were invalid)
+		if (empty($validatedUids)) {
+			error_log("IMAPEmailChecker: No valid UIDs remaining after validation in setMessageReadStatus.");
+			return false;
+		}
+
+		// Convert the array of validated UIDs into a comma-separated string sequence
+		$uidSequence = implode(',', $validatedUids);
+		$flag = "\\Seen"; // The flag we are manipulating (needs double backslash in PHP string)
+
+		$success = false;
+
+		// Use imap_setflag_full to mark as read, imap_clearflag_full to mark as unread
+		if ($markAsRead) {
+			// Set the \Seen flag
+			$success = imap_setflag_full($this->conn, $uidSequence, $flag, ST_UID);
+			if (!$success) {
+				error_log("IMAPEmailChecker: Failed to set {$flag} flag (mark read) for UIDs: {$uidSequence}. Error: " . imap_last_error());
+			}
+		} else {
+			// Clear the \Seen flag
+			$success = imap_clearflag_full($this->conn, $uidSequence, $flag, ST_UID);
+			if (!$success) {
+				error_log("IMAPEmailChecker: Failed to clear {$flag} flag (mark unread) for UIDs: {$uidSequence}. Error: " . imap_last_error());
+			}
+		}
+
+		return $success;
+	}
+
 
 	/**
 	 * Deletes an email from the mailbox by UID.

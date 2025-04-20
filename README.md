@@ -1,6 +1,6 @@
 # IMAPEmailChecker
 
-A PHP class to fetch and process emails from an IMAP mailbox. This class provides functionalities to retrieve emails based on different criteria, decode email bodies (including handling inline images), extract attachments, delete and archive emails.
+A PHP class to fetch and process emails from an IMAP mailbox. This class provides functionalities to retrieve emails based on different criteria, check mailbox status, manage read/unread flags, perform custom searches, decode email bodies (including handling inline images), extract attachments, delete and archive emails.
 
 ## Purpose
 
@@ -9,273 +9,408 @@ This class is designed to simplify the process of accessing and managing emails 
 -   **Email Archiving:** Storing emails in a database or other storage for record-keeping.
 -   **Automated Email Processing:** Building scripts to analyze incoming emails, trigger actions based on email content, or integrate email data into other systems.
 -   **Email Backup Solutions:** Downloading and backing up emails from a mailbox.
+-   **Mailbox Monitoring:** Checking for new or unread emails and mailbox status using efficient methods.
+-   **Targeted Retrieval:** Searching for specific emails based on various criteria and fetching only those.
 
 The class handles complexities like:
 
--   **Robust Decoding:** Correctly decodes email bodies and headers in various encodings (e.g., Base64, Quoted-Printable) and normalizes text content to **UTF-8**, handling specified charsets or attempting auto-detection.
--   **Inline Image Embedding:** Automatically embeds inline images (referenced via `cid:`) within HTML email bodies as Base64 data URIs for easy display.
--   **Attachment Extraction:** Provides access to *non-inline* email attachments with their filenames, content, and types.
--   **UID Management:** Focuses on using Unique Identifiers (UIDs) for reliable message identification and supports fetching new emails since the last processed email using UIDs for efficient incremental retrieval.
+-   **Robust Decoding:** Correctly decodes email bodies and headers in various encodings (e.g., Base64, Quoted-Printable) and normalizes text content to **UTF-8**.
+-   **Inline Image Embedding:** Automatically embeds inline images (referenced via `cid:`) within HTML email bodies as Base64 data URIs.
+-   **Attachment Extraction:** Provides access to *non-inline* email attachments.
+-   **UID Management:** Focuses on using Unique Identifiers (UIDs) for reliable message identification and efficient incremental retrieval.
+-   **Status Checks & Flag Management:** Provides methods to check mailbox status efficiently and manage the `\Seen` (read/unread) flag.
+-   **Custom Search:** Allows flexible searching using standard IMAP criteria strings.
 
 ## Usage
 
 To use the `IMAPEmailChecker` class, you need to have the PHP IMAP extension enabled. You'll first need to establish an IMAP connection using `imap_open()` before instantiating the class.
 
-Here's a basic example of how to use the class:
+Here's an extended example covering many common operations:
 
 ```php
 <?php
 
 declare(strict_types=1);
 
-require 'IMAPEmailChecker.php'; // Adjust path if necessary
+// Use Composer's autoloader
+// Make sure to run 'composer install' in your project directory
+require 'vendor/autoload.php';
+
+// Or if not using Composer:
+// require 'src/IMAPEmailChecker.php';
 
 use IMAPEmailChecker\IMAPEmailChecker;
 use DateTime;
 
-// IMAP connection details - Replace with your actual server details
-// Ensure you use the correct flags (e.g., /ssl, /tls, /novalidate-cert)
-$hostname = '{your_imap_server:993/imap/ssl}INBOX'; // Example for Gmail with SSL
-$username = 'your_username@example.com';
-$password = 'your_password';
+// --- Configuration ---
+// IMPORTANT: Store credentials securely (e.g., .env file, environment variables), not directly in code!
+$hostname = getenv('IMAP_HOSTNAME') ?: '{your_imap_server:993/imap/ssl}INBOX'; // Example: '{imap.gmail.com:993/imap/ssl}INBOX'
+$username = getenv('IMAP_USERNAME') ?: 'your_username@example.com';
+$password = getenv('IMAP_PASSWORD') ?: 'your_password';
+$archiveFolder = getenv('IMAP_ARCHIVE_FOLDER') ?: 'Archive'; // e.g., '[Gmail]/All Mail' or 'Archived'
 
-// Establish IMAP connection
-// Consider adding OP_READONLY if you only intend to read messages initially
+// --- Establish Connection ---
+echo "Connecting to " . htmlspecialchars($hostname) . "...<br>";
 $connection = imap_open($hostname, $username, $password);
 
 if (!$connection) {
-    // It's crucial to handle connection errors robustly
-    echo "Connection failed: " . imap_last_error() . "\n";
-    // You might want to log this error instead of echoing
+    // Display detailed error and exit
+    printf("Connection failed: %s <br>\n", htmlspecialchars(imap_last_error() ?: 'Unknown error'));
     exit();
 }
+echo "Connection successful.<br>";
 
-// Instantiate the IMAPEmailChecker class
+// --- Instantiate the Class ---
 $emailChecker = new IMAPEmailChecker($connection);
 
+// --- Helper Function for Display ---
+function displayEmailDetails(array $email): void
+{
+    $uid = $email['uid'] ?? 'N/A';
+    echo "<h4>--- Details for Email UID: {$uid} ---</h4>";
+    echo "<ul>";
+    echo "<li><b>Subject:</b> " . htmlspecialchars($email['subject'] ?? 'N/A') . "</li>";
+    echo "<li><b>From:</b> " . htmlspecialchars($email['from'] ?? 'N/A') . "</li>";
+    echo "<li><b>Date:</b> " . htmlspecialchars($email['date'] ?? 'N/A') . "</li>";
+
+    // Display Recipients
+    if (!empty($email['to'])) {
+        echo "<li><b>To:</b> " . htmlspecialchars(implode(', ', $email['to'])) . "</li>";
+    }
+    if (!empty($email['cc'])) {
+        echo "<li><b>Cc:</b> " . htmlspecialchars(implode(', ', $email['cc'])) . "</li>";
+    }
+    // BCC is often not available in headers of received mail
+    if (!empty($email['bcc'])) {
+        echo "<li><b>Bcc (Received):</b> " . htmlspecialchars(implode(', ', $email['bcc'])) . "</li>";
+    }
+
+    // Display Body Snippet or Information
+    $body = $email['message_body'] ?? '';
+    if (!empty($body)) {
+        // Avoid outputting raw HTML directly. Show info or a snippet.
+        echo "<li><b>Body Length:</b> " . strlen($body) . " characters</li>";
+        // Example snippet (be careful with HTML content)
+        $snippet = mb_substr(strip_tags($body), 0, 100); // Get first 100 chars of plain text version
+        echo "<li><b>Body Snippet:</b> " . htmlspecialchars($snippet) . "...</li>";
+        // For full display, consider an iframe or specific rendering logic:
+        // echo '<li><b>Body Preview:</b> <details><summary>Click to view body</summary><iframe srcdoc="' . htmlspecialchars($body) . '" style="width:100%; height: 200px; border: 1px solid #ccc;"></iframe></details></li>';
+    } else {
+        echo "<li><b>Body:</b> (empty or not retrieved)</li>";
+    }
+
+    // Display Attachments
+    $attachments = $email['attachments'] ?? [];
+    if (!empty($attachments)) {
+        echo "<li><b>Attachments (" . count($attachments) . "):</b>";
+        echo "<ul>";
+        foreach ($attachments as $attachment) {
+            $filename = htmlspecialchars($attachment['filename'] ?? 'unknown');
+            $filesize = isset($attachment['content']) ? round(strlen($attachment['content']) / 1024) : 'N/A'; // Size in KB
+            $filetype = htmlspecialchars($attachment['type'] ?? 'unknown');
+            echo "<li>{$filename} ({$filesize} KB, Type: {$filetype})</li>";
+            // In a real app, you might add a link to download/save the attachment:
+            // saveAttachment($uid, $attachment['filename'], $attachment['content']);
+        }
+        echo "</ul></li>";
+    } else {
+         echo "<li><b>Attachments:</b> None</li>";
+    }
+
+    echo "</ul>";
+}
+
+
+// ========================================================
 // --- Example Operations ---
+// ========================================================
 
-// 1. Check all emails in the inbox
-echo "<h3>All Emails:</h3>";
-$allEmails = $emailChecker->checkAllEmail(); // Returns array keyed by UID
-if (empty($allEmails)) {
-    echo "<p>No emails found.</p>";
+// 1. Check Mailbox Status (get counts and UIDs)
+echo "<h3>1. Mailbox Status:</h3>";
+$mailboxStatus = $emailChecker->checkMailboxStatus();
+if ($mailboxStatus === false) {
+    echo "<p style='color: red;'>Failed to retrieve mailbox status. Error: " . htmlspecialchars(imap_last_error() ?: 'Unknown') . "</p>";
 } else {
-    echo "<p>Found " . count($allEmails) . " emails.</p>";
-    echo "<pre>";
-    // print_r($allEmails); // Be careful printing large arrays
-    // Example: Print subjects of all emails
-    foreach ($allEmails as $uid => $email) {
-        echo "UID: {$uid} - Subject: " . htmlspecialchars($email['subject'] ?? 'N/A') . "<br>";
-    }
-    echo "</pre>";
-    echo "<p>Last UID processed: " . $emailChecker->lastuid . "</p>"; // Store this if needed
+    // (Display status - same as before)
+    echo "<ul>";
+    echo "<li>Total Messages: " . $mailboxStatus['total'] . "</li>";
+    echo "<li>Highest UID: " . $mailboxStatus['highest_uid'] . "</li>";
+    echo "<li>Recent Count: " . count($mailboxStatus['recent_uids']) . "</li>";
+    echo "<li>Unseen Count: " . count($mailboxStatus['unseen_uids']) . "</li>";
+    echo "</ul>";
 }
 echo "<hr>";
 
-// 2. Check emails since a specific date
-echo "<h3>Emails Since Date:</h3>";
-$sinceDate = new DateTime('2024-05-25'); // Example date
-$emailsSinceDate = $emailChecker->checkSinceDate($sinceDate); // Returns array keyed by UID or false
+// 2. Check Unread Emails & Display Details
+echo "<h3>2. Processing Unread Emails:</h3>";
+$unreadEmails = $emailChecker->checkUnreadEmails(); // Returns array keyed by UID or false
+$uidsToMarkRead = [];
 
-if ($emailsSinceDate === false) {
-    echo "<p>Error checking emails since date. IMAP Error: " . imap_last_error() . "</p>";
-} elseif (empty($emailsSinceDate)) {
-    echo "<p>No emails found since " . $sinceDate->format('Y-m-d') . ".</p>";
+if ($unreadEmails === false) {
+    echo "<p style='color: red;'>Error checking unread emails. Error: " . htmlspecialchars(imap_last_error() ?: 'Unknown') . "</p>";
+} elseif (empty($unreadEmails)) {
+    echo "<p>No unread emails found.</p>";
 } else {
-    echo "<p>Found " . count($emailsSinceDate) . " emails since " . $sinceDate->format('Y-m-d') . ".</p>";
-    echo "<pre>";
-    // print_r($emailsSinceDate);
-    foreach ($emailsSinceDate as $uid => $email) {
-        echo "UID: {$uid} - Subject: " . htmlspecialchars($email['subject'] ?? 'N/A') . "<br>";
+    echo "<p>Found " . count($unreadEmails) . " unread emails. Processing details...</p>";
+    foreach ($unreadEmails as $uid => $email) {
+        displayEmailDetails($email); // Use the helper function to show details
+        $uidsToMarkRead[] = $uid; // Collect UIDs to mark as read later
     }
-    echo "</pre>";
-    echo "<p>Last UID updated to: " . $emailChecker->lastuid . "</p>"; // Store this if needed
+    echo "<p>Last UID updated by checkUnreadEmails: " . $emailChecker->lastuid . "</p>";
+
+    // 3. Mark Processed Emails as Read
+    if (!empty($uidsToMarkRead)) {
+        echo "<h4>Marking " . count($uidsToMarkRead) . " emails as Read:</h4>";
+        if ($emailChecker->setMessageReadStatus($uidsToMarkRead, true)) { // true = mark as read
+            echo "<p>Successfully marked emails as read.</p>";
+        } else {
+            echo "<p style='color: red;'>Failed to mark emails as read. Error: " . htmlspecialchars(imap_last_error() ?: 'Unknown') . "</p>";
+        }
+    }
 }
 echo "<hr>";
 
-// 3. Check emails since the last known UID (Incremental Check)
-echo "<h3>Emails Since Last UID:</h3>";
-
-// --- How to manage last UID ---
-// Scenario 1: First run, or no stored UID. Use 0.
-$lastKnownUID = 0; // Or load from your storage (database, file, etc.)
-// $lastKnownUID = load_last_uid_from_storage();
-
+// 4. Check emails since the last known UID (Incremental Check)
+echo "<h3>4. Checking New Emails Since Last Run:</h3>";
+// In a real app, load this from storage
+$lastKnownUID = 0; // <<< Replace with loading logic
 echo "<p>Checking for emails newer than UID: " . $lastKnownUID . "</p>";
-
-$emailsSinceLastUID = $emailChecker->checkSinceLastUID($lastKnownUID); // Returns array keyed by UID or false
+$emailsSinceLastUID = $emailChecker->checkSinceLastUID($lastKnownUID);
+$uidsProcessedInThisRun = [];
 
 if ($emailsSinceLastUID === false) {
-    echo "<p>Error checking emails since last UID. IMAP Error: " . imap_last_error() . "</p>";
+    echo "<p style='color: red;'>Error checking emails since last UID. Error: " . htmlspecialchars(imap_last_error() ?: 'Unknown') . "</p>";
 } elseif (empty($emailsSinceLastUID)) {
     echo "<p>No new emails found since UID " . $lastKnownUID . ".</p>";
-    // $emailChecker->lastuid might still be $lastKnownUID if nothing was found
-    echo "<p>Current last UID remains: " . $emailChecker->lastuid . "</p>";
 } else {
     echo "<p>Found " . count($emailsSinceLastUID) . " new emails.</p>";
-    echo "<pre>";
-    // Process the new emails
     foreach ($emailsSinceLastUID as $uid => $email) {
-        echo "Processing New Email UID: {$uid} - Subject: " . htmlspecialchars($email['subject'] ?? 'N/A') . "<br>";
-        // Add your processing logic here (e.g., save to DB, trigger actions)
+        displayEmailDetails($email); // Display details of new emails
+        $uidsProcessedInThisRun[] = $uid;
+        // Your processing logic here (e.g., save to DB, trigger actions)...
     }
-    echo "</pre>";
     $newLastUID = $emailChecker->lastuid;
     echo "<p>Last UID updated to: " . $newLastUID . "</p>";
-    // IMPORTANT: Store the new last UID for the next run
+    // IMPORTANT: You should store $newLastUID persistently for the next run
     // save_last_uid_to_storage($newLastUID);
 }
 echo "<hr>";
 
+// 5. Custom Search & Fetch Specific Messages
+echo "<h3>5. Custom Search & Fetch Specific Details:</h3>";
+// Example: Find emails with PDF attachments received this month
+$currentMonth = date('M-Y'); // e.g., May-2024
+$searchCriteria = 'TEXT ".pdf" SINCE "1-' . $currentMonth . '"';
+echo "<h4>Searching for: \"{$searchCriteria}\" (UIDs)</h4>";
+$pdfEmailUids = $emailChecker->search($searchCriteria);
+
+if ($pdfEmailUids === false) {
+    echo "<p style='color: red;'>Search failed. Error: " . htmlspecialchars(imap_last_error() ?: 'Unknown') . "</p>";
+} elseif (empty($pdfEmailUids)) {
+    echo "<p>No emails found matching criteria.</p>";
+} else {
+    echo "<p>Found " . count($pdfEmailUids) . " matching UIDs: " . implode(', ', $pdfEmailUids) . ". Fetching details...</p>";
+
+    // 6. Fetch the details ONLY for the messages found by search
+    $pdfEmails = $emailChecker->fetchMessagesByIds($pdfEmailUids);
+
+    if (empty($pdfEmails)) {
+         echo "<p style='color: orange;'>Could not fetch details for the found UIDs (check logs).</p>";
+    } else {
+        foreach ($pdfEmails as $uid => $email) {
+            displayEmailDetails($email); // Display details for each found email
+        }
+    }
+}
+echo "<hr>";
+
+
 // --- Destructive Operations (Use with extreme caution!) ---
+// Get some UIDs to potentially delete/archive (e.g., from the search above)
+$uids_to_process = $pdfEmailUids ?? $uidsToMarkRead ?? [];
 
-// Get a list of UIDs to potentially delete/archive (e.g., from the last check)
-$uids_to_process = array_keys($emailsSinceLastUID ?? []); // Get UIDs from the last successful check
-
-// 4. Delete an email by UID (Example: Delete the first new email found)
+// 7. Delete an email by UID (Example: Last UID found in search)
 if (!empty($uids_to_process)) {
-    $uid_to_delete = $uids_to_process[0]; // Example: target the first UID
-    echo "<h3>Attempting to Delete Email (UID {$uid_to_delete}):</h3>";
+    $uid_to_delete = $uids_to_process[count($uids_to_process)-1];
+    echo "<h3>7. Attempting to Delete Email (UID {$uid_to_delete}):</h3>";
     echo "<p><strong>Warning: This action is permanent after expunge!</strong></p>";
-
     // Uncomment the following lines ONLY if you are sure!
     // $deleteResult = $emailChecker->deleteEmail($uid_to_delete);
-    // if ($deleteResult) {
-    //     echo "<p>Email with UID {$uid_to_delete} deleted successfully.</p>";
-    // } else {
-    //     echo "<p>Failed to delete email with UID {$uid_to_delete}.</p>";
-    //     echo "<p>Error: " . imap_last_error() . "</p>";
-    // }
+    // if ($deleteResult) { echo "<p>Email deleted successfully.</p>"; } else { echo "<p style='color:red;'>Failed to delete. Error: " . htmlspecialchars(imap_last_error() ?: 'Unknown') . "</p>"; }
     echo "<p>(Deletion code is commented out for safety)</p>";
-
 } else {
-    echo "<h3>Deleting Email:</h3>";
-    echo "<p>No UIDs available from the last check to demonstrate deletion.</p>";
+    echo "<h3>7. Deleting Email:</h3><p>No UIDs available to demonstrate deletion.</p>";
 }
 echo "<hr>";
 
-
-// 5. Archive an email by UID (Example: Archive the first new email found)
-// Make sure the 'Archive' folder exists on your mail server, or change the name.
+// 8. Archive an email by UID (Example: First UID found in search)
 if (!empty($uids_to_process)) {
-    $uid_to_archive = $uids_to_process[0]; // Example: target the first UID (if deletion wasn't performed)
-    $archiveFolder = 'Archive'; // Or 'Archived', 'Processed', etc. - check your mailbox folders
-    echo "<h3>Attempting to Archive Email (UID {$uid_to_archive}) to '{$archiveFolder}':</h3>";
-    echo "<p><strong>Warning: This moves the email and expunges the original!</strong></p>";
-
+    $uid_to_archive = $uids_to_process[0];
+    echo "<h3>8. Attempting to Archive Email (UID {$uid_to_archive}) to '{$archiveFolder}':</h3>";
+    echo "<p><strong>Warning: This moves the email and expunges the original! Ensure folder exists.</strong></p>";
     // Uncomment the following lines ONLY if you are sure!
     // $archiveResult = $emailChecker->archiveEmail($uid_to_archive, $archiveFolder);
-    // if ($archiveResult) {
-    //     echo "<p>Email with UID {$uid_to_archive} archived successfully to '{$archiveFolder}'.</p>";
-    // } else {
-    //     echo "<p>Failed to archive email with UID {$uid_to_archive}.</p>";
-    //     echo "<p>Error: " . imap_last_error() . "</p>";
-    // }
-     echo "<p>(Archival code is commented out for safety)</p>";
+    // if ($archiveResult) { echo "<p>Email archived successfully.</p>"; } else { echo "<p style='color:red;'>Failed to archive. Error: " . htmlspecialchars(imap_last_error() ?: 'Unknown') . "</p>"; }
+    echo "<p>(Archival code is commented out for safety)</p>";
 } else {
-    echo "<h3>Archiving Email:</h3>";
-    echo "<p>No UIDs available from the last check to demonstrate archival.</p>";
+    echo "<h3>8. Archiving Email:</h3><p>No UIDs available to demonstrate archival.</p>";
 }
 echo "<hr>";
 
+// --- Clean up ---
+echo "Closing connection.<br>";
+imap_close($connection);
 
-// Explicitly close the connection (optional, as destructor does it, but good practice)
-// imap_close($connection);
-// echo "<p>IMAP connection closed explicitly.</p>";
 ?>
 ```
-  
+
 
 ### Available Methods
 
-All `check*` methods return data in an array format keyed by **UID**, except for `deleteEmail()` and `archiveEmail()` which return boolean values indicating success or failure. The results are also stored in the public `$messages` property after each `check*` call.
+Methods that fetch full email details (`check*` methods, `fetchMessagesByIds`) return data in an array format keyed by **UID**. Methods that only find identifiers (`search`) return arrays of identifiers. Methods that manage flags or mailbox state return boolean or status arrays.
+
+*   **`checkMailboxStatus()`**:
+
+    Checks the status of the current mailbox efficiently without fetching email bodies/headers.
+
+    *   **Returns:** `array|bool` - An associative array with keys:
+        *   `total` (`int`): Total number of messages.
+        *   `highest_uid` (`int`): The highest UID currently in the mailbox (0 if empty).
+        *   `recent_uids` (`array<int>`): UIDs of messages with the `\Recent` flag.
+        *   `unseen_uids` (`array<int>`): UIDs of messages with the `\Unseen` flag.
+        Returns `false` on failure of any underlying IMAP operation.
+
+
+*   **`search(string $criteria, bool $returnUids = true)`**:
+
+    Performs a search using custom IMAP criteria and returns only the matching identifiers.
+
+    *   **Parameters:**
+        *   `$criteria` (`string`): The IMAP search criteria string (e.g., `FROM "x"`, `SUBJECT "y"`).
+        *   `$returnUids` (`bool`, optional): `true` (default) to return UIDs, `false` for sequence numbers.
+    *   **Returns:** `array|false` - An array of integer UIDs or sequence numbers, sorted numerically. Empty array if no match. `false` on search failure or empty criteria.
+
+
+*   **`fetchMessagesByIds(array $identifiers, bool $isUid = true)`**:
+
+    Fetches and processes the full details for specific messages identified by UID or sequence number. Designed to be used after `search` or if you have a list of specific messages to retrieve. **Does not** update the class's main `$messages` or `$lastuid` properties.
+
+    *   **Parameters:**
+        *   `$identifiers` (`array<int>`): Array of UIDs or sequence numbers.
+        *   `$isUid` (`bool`, optional): `true` (default) if `$identifiers` are UIDs, `false` if sequence numbers.
+    *   **Returns:** `array` - An associative array where keys are the requested identifiers (or the actual UID if found) and values are the processed message data arrays (see "Message Array Structure"). Omits messages that couldn't be processed.
+
 
 *   **`checkAllEmail()`**:
 
-    Retrieves all emails from the connected mailbox. Be cautious when using this method on very large inboxes as it may consume significant resources and time.
+    Retrieves *all* emails from the connected mailbox. **Use with caution on large mailboxes.** Stores results in `$messages` property.
 
-    *   **Returns:** `array` - An associative array where keys are message **UIDs** and values are arrays containing email details (see "Message Array Structure" below). Returns an empty array if no emails are found. Updates the `$lastuid` property to the highest UID found.
+    *   **Returns:** `array` - An associative array (keyed by UID) of processed email details. Empty array if no emails found. Updates `$lastuid`.
+
 
 *   **`checkSinceDate(DateTime $date)`**:
 
-    Searches for emails received on or after the specified date (`SINCE` criteria).
+    Retrieves emails received on or after the specified date. Stores results in `$messages` property.
 
-    *   **Parameters:**
-        *   `$date` (`DateTime` object): The date from which to start searching for emails.
-    *   **Returns:** `array|bool` - An associative array of emails (keyed by **UID**) received since the given date (same structure as `checkAllEmail()`). Returns `false` on search failure (check `imap_last_error()`), or an empty array if no emails are found since the date. Updates the `$lastuid` property to the highest UID found *among the matching emails*.
+    *   **Parameters:** `$date` (`DateTime`)
+    *   **Returns:** `array|bool` - Associative array of emails (keyed by UID). `false` on search failure, empty array if none found. Updates `$lastuid`.
+
 
 *   **`checkSinceLastUID(int $uid)`**:
 
-    Retrieves emails with a UID **greater than** the provided `$uid`. This is the recommended method for fetching only new emails since the last check. To use this effectively, you should store the `$lastuid` property after each successful call and use it as the `$uid` parameter for the next call.
+    Retrieves emails with a UID **greater than** the provided `$uid`. **Recommended for incremental fetching.** Stores results in `$messages` property.
+
+    *   **Parameters:** `$uid` (`int`) - Last known UID (use 0 for first check).
+    *   **Returns:** `array|bool` - Associative array of emails (keyed by UID). `false` on search failure, empty array if none found. Updates `$lastuid` only if new emails are found.
+
+
+*   **`checkUnreadEmails()`**:
+
+    Retrieves emails currently marked with the `\Unseen` flag. Stores results in `$messages` property.
+
+    *   **Returns:** `array|bool` - Associative array of unread emails (keyed by UID). `false` on search failure, empty array if none found. Updates `$lastuid`.
+
+
+*   **`setMessageReadStatus(array $uids, bool $markAsRead)`**:
+
+    Sets or clears the `\Seen` (read/unread) flag for the specified UIDs.
 
     *   **Parameters:**
-        *   `$uid` (`int`): The last known UID. Use `0` for the initial check if you don't have a previous UID.
-    *   **Returns:** `array|bool` - An associative array of emails (keyed by **UID**) received since the given UID (same structure as `checkAllEmail()`). Returns `false` on search failure (check `imap_last_error()`), or an empty array if no new emails are found. Updates the `$lastuid` property to the highest UID found *among the newly fetched emails*. If no new emails are found, `$lastuid` remains unchanged.
+        *   `$uids` (`array<int>`): Array of UIDs to modify.
+        *   `$markAsRead` (`bool`): `true` to mark as read (`\Seen`), `false` to mark as unread (clear `\Seen`).
+    *   **Returns:** `bool` - `true` on success, `false` on failure or if any UID was invalid.
+
 
 *   **`deleteEmail(int $uid)`**:
 
-    Deletes an email from the mailbox by its UID. This marks the email for deletion and then **expunges** the mailbox, permanently removing it. **Use with extreme caution.**
+    Deletes an email by UID (marks for deletion and expunges). **Permanent action! Use with caution.**
 
-    *   **Parameters:**
-        *   `$uid` (`int`): The **UID** of the email to delete.
-    *   **Returns:** `bool` - `true` on successful deletion and expunge, `false` on failure (e.g., failed to mark for delete or failed to expunge). Check `imap_last_error()` on failure.
+    *   **Parameters:** `$uid` (`int`)
+    *   **Returns:** `bool` - `true` on success, `false` on failure.
+
 
 *   **`archiveEmail(int $uid, string $archiveFolder = 'Archive')`**:
 
-    Archives an email by moving it to a specified folder using its UID and then **expunges** the current mailbox to remove the original. The default archive folder is "Archive". Ensure the target folder exists on the server. **Use with caution.**
+    Moves an email by UID to a specified folder and expunges the original. **Use with caution.** Ensure the target folder exists.
 
     *   **Parameters:**
-        *   `$uid` (`int`): The **UID** of the email to archive.
-        *   `$archiveFolder` (`string`, optional): The name of the folder to move the email to. Defaults to `'Archive'`. Use the correct name as it appears on your mail server.
-    *   **Returns:** `bool` - `true` on successful move and expunge, `false` on failure (e.g., move failed, folder doesn't exist, or expunge failed). Check `imap_last_error()` on failure.
+        *   `$uid` (`int`)
+        *   `$archiveFolder` (`string`, optional)
+    *   **Returns:** `bool` - `true` on success, `false` on failure.
+
 
 ### Public Properties
 
 *   **`$lastuid`**:
     *   Type: `int`
-    *   Description: After calling `checkAllEmail()`, `checkSinceDate()`, or `checkSinceLastUID()`, this property will be updated to the **UID** of the *last* (highest UID) email processed during that call. You should typically store this value between script runs and use it in subsequent calls to `checkSinceLastUID()` to efficiently retrieve only new emails. Initialized to `0`.
+    *   Description: After calling `checkAllEmail()`, `checkSinceDate()`, `checkSinceLastUID()`, or `checkUnreadEmails()`, this property holds the **UID** of the *last* (highest UID) email processed during that specific call. Store this between runs for efficient use with `checkSinceLastUID()`. Initialized to `0`. **Note:** `fetchMessagesByIds` does *not* update this property.
 
 *   **`$messages`**:
     *   Type: `array`
-    *   Description: An associative array containing the email messages fetched by the last successful `check*` method call. The array is keyed by the message **UID**. The structure of each message value within this array is described below in "Message Array Structure".
+    *   Description: An associative array containing the email messages fetched by the last successful call to a `check*` method that retrieves full message details (e.g., `checkAllEmail`, `checkUnreadEmails`). The array is keyed by the message **UID**. **Note:** `fetchMessagesByIds` populates its own return value but does *not* update this property.
+
 
 ### Message Array Structure
 
-Each email message in the `$messages` array (keyed by UID) is an associative array with the following keys:
+Each email message returned by `check*` methods or `fetchMessagesByIds` is an associative array with the following keys:
 
-*   **`uid`**: (`int`) - The unique identifier (UID) of the message in the mailbox (persistent). **This is the key in the `$messages` array.**
-*   **`message_number`**: (`int`) - The sequence number of the message in the mailbox (may not be persistent across sessions or after deletions/expunges).
-*   **`message_id`**: (`string|null`) - The unique Message-ID header of the email (e.g., `message.id@domain.com`), with angle brackets trimmed. `null` if not present.
-*   **`subject`**: (`string`) - The email subject, decoded from MIME and converted to UTF-8. Empty string if not present.
-*   **`message_body`**: (`string`) - The main body of the email (decoded and converted to UTF-8), with HTML preferred over plain text when available. Inline images referenced by `cid:` are embedded as Base64 data URIs within the HTML content. Can be an empty string if the body is empty or decoding failed.
-*   **`date`**: (`string|null`) - The raw date string from the email header (e.g., `Fri, 24 May 2024 15:53:38 -0400`). `null` if not present.
-*   **`datetime`**: (`DateTime|null`) - A `DateTime` object representing the email's date and time, parsed from the header. `null` if the date header was missing or could not be parsed.
-*   **`fromaddress`**: (`string`) - The decoded email address of the sender (e.g., `sender@example.com`). Empty string if parsing failed.
-*   **`from`**: (`string`) - The decoded friendly name and address of the sender (e.g., `"Sender Name" <sender@example.com>` or just `sender@example.com` if no name).
-*   **`to`**: (`array`) - An array of decoded email addresses in the "To" field.
-*   **`tocount`**: (`int`) - The number of "To" addresses.
-*   **`cc`**: (`array`) - An array of decoded email addresses in the "CC" field.
-*   **`cccount`**: (`int`) - The number of "CC" addresses.
-*   **`bcc`**: (`array`) - An array of decoded email addresses found in the header's "BCC" field (often empty or not present due to privacy).
-*   **`bcccount`**: (`int`) - The number of "BCC" addresses found.
-*   **`attachments`**: (`array`) - An array containing **non-inline** attachments found in the email. Each element is an associative array with the following keys:
-    *   **`filename`**: (`string`) - The decoded filename of the attachment. Defaults to `unknown_N` if a name cannot be determined.
-    *   **`content`**: (`string`) - The raw (decoded) content of the attachment.
-    *   **`type`**: (`string`) - The decoded MIME subtype of the attachment (e.g., `jpeg`, `png`, `pdf`).
-*   **`bid`**: (`int|null`) - Extracts a number from the subject if it matches the pattern `#N` (where N is one or more digits). Returns the extracted number as an `int`, or `null` if no match is found. (Originally for ticket system testing).
-*   **`unseen`**: (`bool`) - `true` if the email is marked as `\Unseen` or if it's marked as `\Recent` but not `\Seen`. `false` otherwise.
+*   **`uid`**: (`int`) - The unique identifier (UID) of the message in the mailbox (persistent).
+*   **`message_number`**: (`int`) - The sequence number of the message (may not be persistent).
+*   **`message_id`**: (`string|null`) - The unique Message-ID header, angle brackets trimmed. `null` if not present.
+*   **`subject`**: (`string`) - The decoded, UTF-8 subject. Empty string if not present.
+*   **`message_body`**: (`string`) - The decoded, UTF-8 body (HTML preferred), with inline images embedded. Empty string if empty or decoding failed.
+*   **`date`**: (`string|null`) - The raw date string from the header. `null` if not present.
+*   **`datetime`**: (`DateTime|null`) - A `DateTime` object for the email's date. `null` if parsing failed.
+*   **`fromaddress`**: (`string`) - The decoded sender email address. Empty string if parsing failed.
+*   **`from`**: (`string`) - The decoded sender friendly name and address.
+*   **`to`**: (`array`) - Array of decoded "To" addresses.
+*   **`tocount`**: (`int`) - Count of "To" addresses.
+*   **`cc`**: (`array`) - Array of decoded "CC" addresses.
+*   **`cccount`**: (`int`) - Count of "CC" addresses.
+*   **`bcc`**: (`array`) - Array of decoded "BCC" addresses (often empty).
+*   **`bcccount`**: (`int`) - Count of "BCC" addresses.
+*   **`attachments`**: (`array`) - Array of **non-inline** attachments. Each is an array:
+    *   **`filename`**: (`string`) - Decoded filename.
+    *   **`content`**: (`string`) - Raw (decoded) attachment content.
+    *   **`type`**: (`string`) - Decoded MIME subtype (e.g., `jpeg`, `pdf`).
+*   **`bid`**: (`int|null`) - Number extracted from subject `#N`, or `null`.
+*   **`unseen`**: (`bool`) - `true` if `\Unseen` flag was set *at the time the message details were fetched*. Check `checkMailboxStatus` for current status.
+
 
 ### Requirements
 
-*   PHP version 8.0 or higher (due to use of property promotion, `match` expressions, etc.)
-*   PHP IMAP extension enabled. You may need to install and enable it if it's not already part of your PHP installation (e.g., `sudo apt-get install php8.x-imap` on Debian/Ubuntu or using PECL).
+*   PHP version 8.0 or higher.
+*   PHP IMAP extension enabled (`ext-imap`).
+*   PHP Multibyte String extension enabled (`ext-mbstring`).
+
 
 ### Notes
 
-*   **Error Handling:** The class includes some internal `error_log` calls but primarily relies on returning `false` from methods upon failure. Your calling script should always check the return values of methods like `checkSinceDate`, `checkSinceLastUID`, `deleteEmail`, and `archiveEmail`. Use `imap_last_error()` and `imap_errors()` after a failure to get detailed IMAP-specific error messages for debugging.
-*   **Performance:** For very large mailboxes, `checkAllEmail()` can be slow and memory-intensive. Using `checkSinceLastUID()` with a stored `$lastuid` is highly recommended for regular checks. Fetching bodies and attachments is inherently slower than just fetching headers/overviews.
-*   **Security:** Always handle your IMAP credentials securely. Avoid hardcoding passwords directly in scripts. Use environment variables, secure configuration files, or secrets management tools. Ensure your connection uses SSL/TLS (`/ssl` or `/tls` flag in hostname) unless you have a specific reason not to.
-*   **UID Focus:** The class primarily operates using UIDs, which are generally persistent identifiers for messages within a mailbox folder, unlike sequence numbers which can change. Methods that modify the mailbox (`deleteEmail`, `archiveEmail`) require UIDs.
-*   **UTF-8:** The class attempts to normalize textual content (subjects, bodies, names, filenames) to UTF-8 for consistent handling.
-*   **Resource Management:** The class includes a destructor (`__destruct()`) that attempts to close the IMAP connection resource (`imap_close()`). However, explicitly calling `imap_close($connection)` on the original connection resource after you are finished with the `IMAPEmailChecker` object is still recommended for predictable resource cleanup, especially in long-running scripts or complex applications.
+*   **Error Handling:** Check return values (`false`) for methods that interact with IMAP. Use `imap_last_error()` for details. Internal errors are logged via `error_log`.
+*   **Performance:** `checkMailboxStatus` and `search` are efficient for checking status or finding specific message IDs. `checkSinceLastUID` is best for polling. Fetching full details (`check*`, `fetchMessagesByIds`) is slower. Avoid `checkAllEmail` on large mailboxes.
+*   **Security:** **Never hardcode credentials.** Use environment variables or secure configuration methods. Ensure you connect via SSL/TLS.
+*   **UID Focus:** The class prioritizes UIDs for reliability.
+*   **State Management:** Be aware that only the main `check*` methods update the `$messages` and `$lastuid` properties. `fetchMessagesByIds` returns its results directly without altering the main class state.
+*   **UTF-8:** Textual content is normalized to UTF-8.
+*   **Resource Management:** The destructor closes the connection. Explicit `imap_close($connection)` after use is still good practice.
+*   **Flags:** The `unseen` value in the message array is a snapshot. Use `checkMailboxStatus` or `setMessageReadStatus` for current flag states. `\Recent` flag behavior varies by server.
