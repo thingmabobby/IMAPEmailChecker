@@ -21,6 +21,19 @@ The class handles complexities like:
 -   **Status Checks & Flag Management:** Provides methods to check mailbox status efficiently and manage the `\Seen` (read/unread) flag.
 -   **Custom Search:** Allows flexible searching using standard IMAP criteria strings.
 
+## Installation
+
+Composer:
+```php
+composer require thingmabobby/imap-email-checker
+```
+
+Standalone:
+```php
+require '..path/to/IMAPEmailChecker.php';
+```
+
+
 ## Usage
 
 To use the `IMAPEmailChecker` class, you need to have the PHP IMAP extension enabled. You'll first need to establish an IMAP connection using `imap_open()` before instantiating the class.
@@ -37,7 +50,7 @@ declare(strict_types=1);
 require 'vendor/autoload.php';
 
 // Or if not using Composer:
-// require 'src/IMAPEmailChecker.php';
+// require '..path/to/IMAPEmailChecker.php';
 
 use IMAPEmailChecker\IMAPEmailChecker;
 use DateTime;
