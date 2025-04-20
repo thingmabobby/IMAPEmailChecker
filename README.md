@@ -314,7 +314,7 @@ Each  email  message  in  the `$messages` array (returned  by `checkAllEmail()`,
 
   
 
-* PHP  version 7.4 or  higher (due  to  type  declarations  and  namespace  usage).
+* PHP  version 8.0 or higher
 
 * PHP  IMAP  extension  enabled. You  may  need  to  install  it  if  it's  not  already  enabled  in  your  PHP  installation (e.g., `sudo  apt-get  install  php-imap` on  Debian/Ubuntu  or  similar  for  your  OS).
 
