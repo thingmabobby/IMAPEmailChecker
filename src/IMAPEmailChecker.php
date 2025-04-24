@@ -25,21 +25,27 @@ if (!defined('ENCQUOTEDPRINTABLE')) define('ENCQUOTEDPRINTABLE', 4);
 if (!defined('ENCOTHER')) define('ENCOTHER', 5);
 
 /**
- * Class IMAPEmailChecker
+ * A PHP class to fetch and process emails from an IMAP mailbox.
  *
- * A class to pull emails from a mailbox using IMAP. It provides methods to retrieve emails,
- * decode email bodies (including inline images), and extract attachments.
+ * This class provides an API to search and retrieve email messages by various criteria 
+ * (e.g., all messages, since a certain date, after a specific UID) and to handle common 
+ * email processing tasks. It can decode message bodies (handling different content encodings 
+ * and inline images), extract attachments, and manage message flags (marking emails as 
+ * read or unread). Additionally, it supports performing custom IMAP searches with flexible 
+ * criteria and includes methods to delete emails or move them to an archive folder. The class 
+ * utilizes IMAP unique identifiers (UIDs) for reliable message identification and processing.
  *
- * Public Properties:
- *  - lastuid: The last UID processed.
- *  - messages: An associative array containing the email messages found, keyed by UID.
+ * Key methods:
+ * - **checkAllEmail()** – Fetches all emails from the mailbox.
+ * - **checkSinceDate(DateTime $date)** – Fetches emails received since the specified date.
+ * - **checkSinceLastUID(int $uid)** – Fetches emails with UIDs greater than the given UID (i.e., newer messages).
+ * - **deleteEmail(int $uid)** – Deletes the specified email from the mailbox.
+ * - **archiveEmail(int $uid, string $folder)** – Moves the specified email to the given folder (e.g., an archive).
  *
- * Usage:
- *  - checkAllEmail() - returns all emails in the mailbox.
- *  - checkSinceDate(DateTime $date) - returns emails since the given date.
- *  - checkSinceLastUID(int $uid) - returns emails since the specified UID.
- *  - deleteEmail(int $uid) - deletes an email by UID.
- *  - archiveEmail(int $uid, string $folder) - archives an email by UID.
+ * @package IMAPEmailChecker
+ * @author Thingmabobby <thingmabobby@gmail.com>
+ * @license http://unlicense.org/ Unlicense
+ * @link    https://github.com/thingmabobby/IMAPEmailChecker GitHub Repository
  */
 class IMAPEmailChecker
 {
