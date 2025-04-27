@@ -7,6 +7,7 @@ use DateTime;
 use InvalidArgumentException;
 use RuntimeException;
 use stdClass;
+use ValueError;
 
 /**
  * Class IMAPEmailChecker
@@ -405,7 +406,7 @@ class IMAPEmailChecker
 				} else {
 					if ($this->debug) { error_log("IMAPEmailChecker: mb_convert_encoding returned false when converting from '{$charset}' to 'UTF-8'. Input likely contained invalid byte sequences."); }
 				}
-			} catch (\ValueError $e) {
+			} catch (ValueError $e) {
 				// PHP 8+: Invalid encoding name
 				if ($this->debug) { error_log("IMAPEmailChecker: mb_convert_encoding failed due to invalid encoding name '{$charset}'. Error: " . $e->getMessage()); }
 			}
