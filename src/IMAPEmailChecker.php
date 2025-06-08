@@ -59,14 +59,14 @@ class IMAPEmailChecker
      * @param bool $debug                      Debug mode - logs non-critical errors if true.
      * @param string $bidRegex            	   Optional regex to extract a string ('bid') from the subject.
      *                                         Must contain a capturing group (usually group 1) for the ID.
-     *                                         Defaults to '/#(\d+)/'.
+     *                                         Defaults to '/#\s*(\d+)/'.
 	 * @throws InvalidArgumentException If the provided $bidRegex is an empty string.
  	 * @throws RuntimeException If the provided IMAP connection is invalid or closed.
      */
 	public function __construct(
 		private $conn,
 		private bool $debug = false,
-		private string $bidRegex = '/#(\d+)/'
+		private string $bidRegex = '/#\s*(\d+)/'
 	) {
 		if (!$this->isValidImapConnection($this->conn)) {
             throw new RuntimeException("Invalid or closed IMAP connection provided.");
