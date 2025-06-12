@@ -305,7 +305,7 @@ class IMAPEmailChecker
 			// Check primary type (self::TYPETEXT = 0) and subtype
 			if ($type === self::TYPETEXT) { // Compare with integer constant
 				if ($subtype === 'html') {
-					$messageParts[] = [$raw]; // Prioritize HTML, replace any plain text found so far
+					$messageParts = [$raw]; // Prioritize HTML, replace any plain text found so far
 					$hasHtml = true;
 				} elseif ($subtype === 'plain') {
 					if (!$hasHtml) { // Only add plain text if we haven't found HTML yet
