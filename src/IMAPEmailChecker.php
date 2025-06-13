@@ -87,9 +87,22 @@ class IMAPEmailChecker
 	 */
 	public function __destruct()
 	{
-		if ($this->conn && ((class_exists('\\IMAP\\Connection') && $this->conn instanceof \IMAP\Connection) || (is_resource($this->conn) && get_resource_type($this->conn) === 'imap'))) {
-            @imap_close($this->conn);
-        }
+		if ($this->conn) {
+			// Check if it's a resource and not closed
+			if (is_resource($this->conn) && get_resource_type($this->conn) === 'imap') {
+				@imap_close($this->conn);
+			}
+
+			// If it's an object (like PHP 8.1+ IMAP\Connection)
+			if (class_exists('\\IMAP\\Connection') && $this->conn instanceof \IMAP\Connection) {
+				try {
+					@imap_close($this->conn);
+				} catch (\ValueError $e) {
+					// Log or silently catch the already closed connection
+					// error_log("imap_close failed in destructor: " . $e->getMessage());
+				}
+			}
+		}
 	}
 
 
