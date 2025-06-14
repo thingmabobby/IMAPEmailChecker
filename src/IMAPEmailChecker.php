@@ -82,6 +82,84 @@ class IMAPEmailChecker
 
 
 	/**
+     * Establishes an IMAP connection and returns an instance of IMAPEmailChecker.
+     *
+     * @param string $hostname The IMAP server hostname.
+     * @param string $username The username for the IMAP account.
+     * @param string $password The password for the IMAP account.
+     * @param string $mailbox  The mailbox to connect to (e.g., "INBOX"). Defaults to "INBOX".
+     * @param int    $port     The IMAP server port. Common ports: 993 (IMAPS/SSL), 143 (IMAP/STARTTLS or plaintext). Defaults to 993.
+     * @param string $flags    Connection flags (e.g., "/ssl", "/tls", "/novalidate-cert"). Defaults to "/ssl".
+     *                         For STARTTLS, you might use "/tls" and port 143.
+     *                         Check your server's requirements.
+     * @param int    $retries  Number of connection retries. Defaults to 0 (no retries beyond the initial attempt).
+     * @param bool   $debug    Enable debug mode for the created instance.
+     * @param string $bidRegex BID regex for the created instance.
+	 * 
+     * @return self An instance of IMAPEmailChecker.
+     * @throws RuntimeException If the IMAP connection fails after all retries.
+     * @throws InvalidArgumentException If $bidRegex is empty.
+     */
+    public static function connect(
+        string $hostname,
+        string $username,
+        string $password,
+        string $mailbox = 'INBOX',
+        int $port = 993,
+        string $flags = '/ssl',
+        int $retries = 0,
+        bool $debug = false,
+        string $bidRegex = '/#\s*(\d+)/'
+    ): self 
+	{
+        if (trim($hostname) === '') {
+            throw new InvalidArgumentException("Hostname cannot be empty.");
+        }
+        if (trim($username) === '') {
+            throw new InvalidArgumentException("Username cannot be empty.");
+        }
+
+        $mailboxString = "{{$hostname}:{$port}{$flags}}{$mailbox}";
+
+        // imap_open can take some time, especially with retries
+        // Suppress errors as we'll check the return value and \imap_errors()
+        $connection = @\imap_open($mailboxString, $username, $password, 0, $retries);
+
+        if ($connection === false) {
+            $imapErrors = \imap_errors();
+            $lastError = \imap_last_error();
+
+            $errorMessages = [];
+            if ($imapErrors) {
+                foreach ($imapErrors as $err) {
+                    $errorMessages[] = $err;
+                }
+            }
+            if ($lastError && !in_array($lastError, $errorMessages)) {
+                $errorMessages[] = $lastError;
+            }
+
+            $errorMessageString = !empty($errorMessages) ? implode('; ', $errorMessages) : 'Unknown IMAP connection error.';
+            throw new RuntimeException("Failed to connect to IMAP server {$hostname} for mailbox '{$mailbox}'. Error: " . $errorMessageString);
+        }
+
+        // Successfully connected, now create an instance of the class
+        try {
+            return new self($connection, $debug, $bidRegex);
+        } catch (RuntimeException | InvalidArgumentException $e) {
+            // Should not happen if connection is valid and bidRegex is default or valid
+            // But if it does, close the connection we just opened
+            if (is_resource($connection) || (class_exists('\\IMAP\\Connection') && $connection instanceof \IMAP\Connection)) {
+                @\imap_close($connection);
+            }
+
+            // Re-throw the exception from the constructor
+            throw $e;
+        }
+    }
+
+
+	/**
 	 * IMAPEmailChecker destructor.
 	 * Closes the IMAP connection.
 	 */
@@ -90,23 +168,24 @@ class IMAPEmailChecker
 		if ($this->conn) {
 			// Check if it's a resource and not closed
 			if (is_resource($this->conn) && get_resource_type($this->conn) === 'imap') {
-				@imap_close($this->conn);
+				@\imap_close($this->conn);
 			}
 
 			// If it's an object (like PHP 8.1+ IMAP\Connection)
 			if (class_exists('\\IMAP\\Connection') && $this->conn instanceof \IMAP\Connection) {
 				try {
-					@imap_close($this->conn);
-				} catch (\ValueError $e) {
-					// Log or silently catch the already closed connection
-					// error_log("imap_close failed in destructor: " . $e->getMessage());
+					@\imap_close($this->conn);
+				} catch (ValueError $e) {
+					if ($this->debug) {
+						error_log("IMAPEmailChecker Destructor: Attempted to close an IMAP\\Connection that was already closed or invalid. Last UID processed: {$this->lastuid}. Error: " . $e->getMessage());
+					}
 				}
 			}
 		}
 	}
 
 
-	 /**
+	/**
      * Checks if the provided value is a valid IMAP connection
      * (resource for PHP < 8.1, \IMAP\Connection object for PHP >= 8.1)
      * and attempts a ping.
@@ -128,7 +207,7 @@ class IMAPEmailChecker
 
         // If it's a valid type, try to ping it to see if it's alive
         if ($isValidType) {
-            return @imap_ping($conn);
+            return @\imap_ping($conn);
         }
 
         return false; // Not a valid IMAP connection type
@@ -136,68 +215,58 @@ class IMAPEmailChecker
 
 
 	/**
-	 * Checks the status of the current mailbox, including UIDs for recent/unseen and the highest UID.
+	 * Checks the status of the current mailbox, including UIDs for unseen and the highest UID.
 	 *
 	 * Retrieves:
 	 * - Total number of messages.
 	 * - The highest UID currently existing in the mailbox.
-	 * - An array containing the UIDs of recent messages (\Recent flag).
 	 * - An array containing the UIDs of unseen messages (\Unseen flag).
 	 *
-	 * Note: 'Recent' messages have the \Recent flag. 'Unseen' messages have the \Unseen flag.
+	 * Note: 'Unseen' messages have the \Unseen flag.
 	 * The highest UID is determined by finding the UID of the message with the highest sequence number.
 	 *
-	 * @return array An associative array with keys 'total' (int), 'highest_uid' (int),
-	 *                    'recent_uids' (array<int>), and 'unseen_uids' (array<int>),
+	 * @return array An associative array with keys 'total' (int), 'unseen_uids' (array<int>), and 'highest_uid' (int)
 	 *                    or false on failure of any required IMAP operation.
 	 *                    'highest_uid' will be 0 if the mailbox is empty.
-	 *                    Example: ['total' => 150, 'highest_uid' => 2345, 'recent_uids' => [2343, 2344, 2345], 'unseen_uids' => [2340, 2343, 2345]]
+	 *                    Example: ['total' => 150, 'unseen_uids' => [2340, 2343, 2345], 'highest_uid' => 2345]
 	 * @throws RuntimeException If any underlying IMAP operation (check, uid, search) fails during status retrieval.
 	 */
 	public function checkMailboxStatus(): array
 	{
 		$status = [
 			'total' => 0,
-			'highest_uid' => 0, // Initialize to 0 for empty mailbox case
-			'recent_uids' => [],
 			'unseen_uids' => [],
+			'highest_uid' => 0, // Initialize to 0 for empty mailbox case
 		];
 
 		// 1. Get total count using imap_check()
-		$check = @imap_check($this->conn);
+		$check = @\imap_check($this->conn);
 		if ($check === false || !($check instanceof stdClass)) {
-			throw new RuntimeException("IMAPEmailChecker: Failed to get mailbox check status (imap_check). Error: " . imap_last_error());			
+			throw new RuntimeException("IMAPEmailChecker: Failed to get mailbox check status (imap_check). Error: " . \imap_last_error());			
 		}
 		$status['total'] = isset($check->Nmsgs) ? (int)$check->Nmsgs : 0;
 
 		// 2. Get highest UID using imap_uid() with the highest sequence number, if mailbox is not empty
 		if ($status['total'] > 0) {
 			// imap_uid() takes the sequence number and returns the corresponding UID
-			$highestUidResult = @imap_uid($this->conn, $status['total']);
+			$highestUidResult = @\imap_uid($this->conn, $status['total']);
 			if ($highestUidResult === false) {
 				// This could happen if the message count changed between imap_check and imap_uid,
 				// or if the server has issues. Treat as failure.
-				throw new RuntimeException("IMAPEmailChecker: Failed to get UID for highest sequence number ({$status['total']}). Error: " . imap_last_error());
+				throw new RuntimeException("IMAPEmailChecker: Failed to get UID for highest sequence number ({$status['total']}). Error: " . \imap_last_error());
 			}
 			$status['highest_uid'] = (int)$highestUidResult;
 		}
 		// If total is 0, highest_uid remains 0.
 
 		// 3. Get unseen UIDs using imap_search()
-		$unseenUidsResult = @imap_search($this->conn, 'UNSEEN', SE_UID);
+		$unseenUidsResult = @\imap_search($this->conn, 'UNSEEN', SE_UID);
 		if ($unseenUidsResult === false) {
-			throw new RuntimeException("IMAPEmailChecker: Failed to search for unseen message UIDs (imap_search UNSEEN). Error: " . imap_last_error());
+			throw new RuntimeException("IMAPEmailChecker: Failed to search for unseen message UIDs (imap_search UNSEEN). Error: " . \imap_last_error());
 		}
 		$status['unseen_uids'] = array_map('intval', $unseenUidsResult);
 
-		// 4. Get recent UIDs using imap_search()
-		$recentUidsResult = @imap_search($this->conn, 'RECENT', SE_UID);
-		if ($recentUidsResult === false) {
-			throw new RuntimeException("IMAPEmailChecker: Failed to search for recent message UIDs (imap_search RECENT). Error: " . imap_last_error());
-		}
-		$status['recent_uids'] = array_map('intval', $recentUidsResult);
-
-		// 5. Return the combined status
+		// 4. Return the combined status
 		return $status;
 	}
 
@@ -235,7 +304,7 @@ class IMAPEmailChecker
 
         if ($results === false) {
             // Search failed
-            throw new RuntimeException("IMAPEmailChecker: imap_search failed for criteria '{$trimmedCriteria}'. Error: " . imap_last_error());
+            throw new RuntimeException("IMAPEmailChecker: imap_search failed for criteria '{$trimmedCriteria}'. Error: " . \imap_last_error());
         }
 
         // imap_search returns an array of integers (or false on error).
@@ -264,7 +333,7 @@ class IMAPEmailChecker
 	private function decodeBody(int $identifier, bool $isUid = false): string|false
 	{
 		$options = $isUid ? FT_UID : 0;
-		$structure = imap_fetchstructure($this->conn, $identifier, $options);
+		$structure = \imap_fetchstructure($this->conn, $identifier, $options);
 		if (!$structure) {
 			// Error fetching structure
 			throw new RuntimeException("IMAPEmailChecker: Failed to fetch structure for identifier {$identifier} (isUid: " . ($isUid ? 'true' : 'false') . ")");
@@ -281,7 +350,7 @@ class IMAPEmailChecker
 			}
 
 			// Fetch the body part using the correct identifier type
-			$raw = imap_fetchbody($this->conn, $identifier, $partNum, $options | FT_PEEK); // Use FT_PEEK to not mark as read
+			$raw = \imap_fetchbody($this->conn, $identifier, $partNum, $options | FT_PEEK); // Use FT_PEEK to not mark as read
 			if ($raw === false) {
 				// Error fetching part, continue if possible
 				throw new RuntimeException("IMAPEmailChecker: Failed to fetch body part {$partNum} for identifier {$identifier}");
@@ -453,9 +522,9 @@ class IMAPEmailChecker
 	private function checkForAttachments(int $identifier, bool $isUid = false): array
 	{
 		$options = $isUid ? FT_UID : 0;
-		$structure = imap_fetchstructure($this->conn, $identifier, $options);
+		$structure = \imap_fetchstructure($this->conn, $identifier, $options);
 		if ($structure === false) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to fetch structure for identifier {$identifier} (isUid: " . ($isUid ? 'true' : 'false') . "). Cannot process attachments. IMAP Error: " . $error);
 		}
 		$attachments = [];
@@ -521,9 +590,9 @@ class IMAPEmailChecker
 
 					if ($isAttachment || $isInline) {
 						// Fetch content using the correct identifier type
-						$content = imap_fetchbody($this->conn, $identifier, $partNum, $options | FT_PEEK);
+						$content = \imap_fetchbody($this->conn, $identifier, $partNum, $options | FT_PEEK);
 						if ($content === false) {
-							$error = imap_last_error() ?: 'Unknown error';
+							$error = \imap_last_error() ?: 'Unknown error';
         					if ($this->debug) { error_log("IMAPEmailChecker: Failed to fetch body for part {$partNum} (identifier {$identifier}, isUid: " . ($isUid ? 'true' : 'false') . "). Skipping this part. IMAP Error: " . $error); }
 							continue; // Skip if fetching failed
 						}
@@ -569,6 +638,7 @@ class IMAPEmailChecker
 
 		return $attachments;
 	}
+
 
 	/**
 	 * Helper to convert IMAP type/subtype constants/strings to a MIME type string.
@@ -664,6 +734,7 @@ class IMAPEmailChecker
 		return '';
 	}
 
+
 	/**
 	 * Formats an array of address objects from imap_headerinfo into an array of strings.
 	 * Handles nested groups if present.
@@ -683,13 +754,12 @@ class IMAPEmailChecker
 					if ($formatted !== '') {
 						$list[] = $formatted;
 					}
-					// If you needed to handle RFC822 group syntax explicitly, you'd check for missing host
-					// and potentially iterate over a 'groupaddresses' property if the library provided it.
 				}
 			}
 		}
 		return $list;
 	}
+
 
 	/**
 	 * Decodes a potentially MIME-encoded header value to UTF-8.
@@ -762,11 +832,11 @@ class IMAPEmailChecker
 			// 1. Validate the individual identifier BEFORE processing
 			if (!is_int($originalId)) {
 				if ($this->debug) { error_log("IMAPEmailChecker: Skipping non-integer identifier provided to fetchMessagesByIds: " . var_export($originalId, true)); }
-				continue; // Skip to next identifier
+				continue;
 			}
 			if ($originalId <= 0) {
 				if ($this->debug) { error_log("IMAPEmailChecker: Skipping non-positive identifier provided to fetchMessagesByIds: {$originalId}"); }
-				continue; // Skip to next identifier
+				continue;
 			}
 
 			// $originalId is now confirmed as a positive integer
@@ -811,26 +881,26 @@ class IMAPEmailChecker
 	private function processMessage(int $identifier, bool $isUid = false): array
 	{
 		// Using @ to suppress potential PHP warnings for imap_* functions,
-    	// as we will check the return value and throw exceptions with imap_last_error().
+    	// as we will check the return value and throw exceptions with \imap_last_error().
 
 		// 1. Get Message Number and UID
-		$msgNo = $isUid ? @imap_msgno($this->conn, $identifier) : $identifier;
+		$msgNo = $isUid ? @\imap_msgno($this->conn, $identifier) : $identifier;
 		if (!$msgNo) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to get message number for " . ($isUid ? "UID" : "identifier") . " {$identifier}. IMAP Error: " . $error);
 		}
 
 		// Get UID if we started with message number, or confirm the one we have
-		$uid = $isUid ? $identifier : @imap_uid($this->conn, $msgNo);
+		$uid = $isUid ? $identifier : @\imap_uid($this->conn, $msgNo);
 		if (!$uid) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
         	throw new RuntimeException("Failed to get UID for message number {$msgNo}. IMAP Error: " . $error);
 		}
 
 		// 2. Fetch Header Info using Message Number
-		$header = @imap_headerinfo($this->conn, $msgNo);
+		$header = @\imap_headerinfo($this->conn, $msgNo);
 		if (!$header || !($header instanceof stdClass)) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to fetch header info for message number {$msgNo} (UID: {$uid}). IMAP Error: " . $error);
 		}
 
@@ -954,10 +1024,10 @@ class IMAPEmailChecker
                 if (isset($matches[1])) {
                     $thisbid = $matches[1];
                 } else {
-                     if ($this->debug) { error_log("IMAPEmailChecker: BID regex '{$this->bidRegex}' matched subject but capturing group 1 was not found in matches: " . var_export($matches, true)); }
+                    if ($this->debug) { error_log("IMAPEmailChecker: BID regex '{$this->bidRegex}' matched subject but capturing group 1 was not found in matches: " . var_export($matches, true)); }
                 }
             } elseif ($matchResult === false) {
-                 if ($this->debug) { error_log("IMAPEmailChecker: preg_match error executing BID regex '{$this->bidRegex}'. Error: " . preg_last_error_msg()); }
+                if ($this->debug) { error_log("IMAPEmailChecker: preg_match error executing BID regex '{$this->bidRegex}'. Error: " . preg_last_error_msg()); }
             }
         }
         $processed['bid'] = $thisbid;
@@ -1003,12 +1073,12 @@ class IMAPEmailChecker
 	public function checkAllEmail(): array
 	{
 		// Use @ suppression for imap functions where we check the return value
-		$msg_count_result = @imap_num_msg($this->conn);
+		$msg_count_result = @\imap_num_msg($this->conn);
 		if ($msg_count_result === false) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to get message count (imap_num_msg). IMAP Error: " . $error);
 		}
-		$msg_count = (int) $msg_count_result; // Cast to int
+		$msg_count = (int)$msg_count_result; // Cast to int
 
 		$this->messages = []; // Reset messages
 		$current_last_uid = $this->lastuid; // Track the highest UID encountered
@@ -1017,11 +1087,11 @@ class IMAPEmailChecker
 			$processedViaOverview = false; // Flag to track if overview was attempted and successful
 
 			// Attempt to fetch overview first
-			$overviews = @imap_fetch_overview($this->conn, "1:{$msg_count}", 0);
+			$overviews = @\imap_fetch_overview($this->conn, "1:{$msg_count}", 0);
 
 			// Check specifically for fetch_overview failure (returns false)
 			if ($overviews === false) {
-				$error = imap_last_error() ?: 'Unknown error';
+				$error = \imap_last_error() ?: 'Unknown error';
 				if ($this->debug) { error_log("IMAPEmailChecker: imap_fetch_overview failed. Falling back to message number iteration. IMAP Error: " . $error); }
 				// Proceed to fallback loop below
 			}
@@ -1108,7 +1178,7 @@ class IMAPEmailChecker
 	 *               will be omitted but logged.
 	 * @throws RuntimeException If the underlying imap_search operation fails.
 	 */
-	public function checkSinceDate(DateTime $date): array // Return type is now array only
+	public function checkSinceDate(DateTime $date): array
 	{
 		$this->messages = [];
 
@@ -1120,11 +1190,11 @@ class IMAPEmailChecker
 		$searchCriteria = "SINCE \"{$thedate}\"";
 
 		// Search returns UIDs because of SE_UID. Use @ to suppress potential warnings.
-		$uids = @imap_search($this->conn, $searchCriteria, SE_UID);
+		$uids = @\imap_search($this->conn, $searchCriteria, SE_UID);
 
 		// Check specifically for imap_search failure
 		if ($uids === false) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("imap_search failed for criteria '{$searchCriteria}'. IMAP Error: " . $error);
 		}
 
@@ -1186,11 +1256,11 @@ class IMAPEmailChecker
 		$searchRange = "{$startUidPlusOne}:*";
 
 		// Fetch overview for the range. Use @ to suppress potential warnings.
-		$overviewList = @imap_fetch_overview($this->conn, $searchRange, FT_UID);
+		$overviewList = @\imap_fetch_overview($this->conn, $searchRange, FT_UID);
 
 		// Check specifically for fetch_overview failure
 		if ($overviewList === false) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			// Don't update lastuid if the fundamental check failed
 			throw new RuntimeException("imap_fetch_overview failed for range '{$searchRange}'. IMAP Error: " . $error);
 		}
@@ -1257,11 +1327,11 @@ class IMAPEmailChecker
 
 		// Search for messages with the \Unseen flag. SE_UID returns UIDs.
 		// Use @ to suppress potential PHP warnings.
-		$uids = @imap_search($this->conn, 'UNSEEN', SE_UID);
+		$uids = @\imap_search($this->conn, 'UNSEEN', SE_UID);
 
 		// Check specifically for imap_search failure
 		if ($uids === false) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("imap_search failed for criteria 'UNSEEN'. IMAP Error: " . $error);
 		}
 
@@ -1333,14 +1403,14 @@ class IMAPEmailChecker
 		// Use imap_setflag_full to mark as read, imap_clearflag_full to mark as unread
 		// Use @ to suppress potential PHP warnings, check return value instead.
 		if ($markAsRead) {
-			$success = @imap_setflag_full($this->conn, $uidSequence, $flag, ST_UID);
+			$success = @\imap_setflag_full($this->conn, $uidSequence, $flag, ST_UID);
 		} else {
-			$success = @imap_clearflag_full($this->conn, $uidSequence, $flag, ST_UID);
+			$success = @\imap_clearflag_full($this->conn, $uidSequence, $flag, ST_UID);
 		}
 
 		// Check if the IMAP operation failed
 		if (!$success) {
-			$error = imap_last_error() ?: 'Unknown error';
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to {$actionVerb} {$flag} flag ({$actionDesc}) for UIDs: {$uidSequence}. IMAP Error: " . $error);
 		}
 	}
@@ -1367,17 +1437,17 @@ class IMAPEmailChecker
 
 		// 2. Mark the message for deletion using its UID
 		// Use @ to suppress potential PHP warnings, check return value.
-		if (!@imap_delete($this->conn, (string)$uid, FT_UID)) {
-			$error = imap_last_error() ?: 'Unknown error';
+		if (!@\imap_delete($this->conn, (string)$uid, FT_UID)) {
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to mark UID {$uid} for deletion. IMAP Error: " . $error);
 		}
 
 		// 3. Permanently remove emails marked for deletion from the current mailbox.
 		// Use @ to suppress potential PHP warnings.
-		if (!@imap_expunge($this->conn)) {
+		if (!@\imap_expunge($this->conn)) {
 			// imap_expunge can return false if there was nothing to expunge,
-			// so we MUST check imap_last_error() to see if a real error occurred.
-			$lastError = imap_last_error();
+			// so we MUST check \imap_last_error() to see if a real error occurred.
+			$lastError = \imap_last_error();
 			if ($lastError) {
 				// Only throw if there was a reported error during expunge
 				throw new RuntimeException("Failed to expunge mailbox after marking UID {$uid} for deletion. IMAP Error: " . $lastError);
@@ -1419,16 +1489,16 @@ class IMAPEmailChecker
 		// 3. Move the email to the archive folder using UID.
 		// CP_UID is used for the options so the sequence ($uid) is treated as a UID.
 		// Use @ to suppress potential PHP warnings, check return value.
-		if (!@imap_mail_move($this->conn, (string)$uid, $archiveFolder, CP_UID)) {
-			$error = imap_last_error() ?: 'Unknown error';
+		if (!@\imap_mail_move($this->conn, (string)$uid, $archiveFolder, CP_UID)) {
+			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to move UID {$uid} to folder '{$archiveFolder}'. IMAP Error: " . $error);
 		}
 
 		// 4. Remove the moved email placeholder from the current mailbox.
 		// Use @ to suppress potential PHP warnings.
-		if (!@imap_expunge($this->conn)) {
+		if (!@\imap_expunge($this->conn)) {
 			// Check if a real error occurred during expunge.
-			$lastError = imap_last_error();
+			$lastError = \imap_last_error();
 			if ($lastError) {
 				// Only throw if there was a reported error during expunge
 				throw new RuntimeException("Failed to expunge mailbox after moving UID {$uid} to '{$archiveFolder}'. IMAP Error: " . $lastError);

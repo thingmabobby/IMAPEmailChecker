@@ -38,7 +38,7 @@ require '..path/to/src/IMAPEmailChecker.php'; // Adjust path as needed
 
 
 ## Usage
-To use the IMAPEmailChecker class, you need to have the PHP IMAP extension enabled. You'll first need to establish an IMAP connection using imap_open() before instantiating the class.
+To use the IMAPEmailChecker class, you need to have the PHP IMAP extension enabled.
 Here's an extended example covering many common operations, demonstrating the use of try...catch for error handling:
 
 
@@ -63,24 +63,12 @@ $username = getenv('IMAP_USERNAME') ?: 'your_username@example.com';
 $password = getenv('IMAP_PASSWORD') ?: 'your_password';
 $archiveFolder = getenv('IMAP_ARCHIVE_FOLDER') ?: 'Archive';
 
-// --- Establish Connection ---
-echo "Connecting to " . htmlspecialchars($hostname) . "...<br>";
-// Use @ to suppress potential warnings from imap_open, check return value
-$connection = @imap_open($hostname, $username, $password);
-
-if (!$connection) {
-    // Display detailed error and exit
-    printf("Connection failed: %s <br>\n", htmlspecialchars(imap_last_error() ?: 'Unknown error'));
-    exit(1); // Exit with error code
-}
-echo "Connection successful.<br>";
-
-// --- Instantiate the Class and Perform Operations ---
 try {
     // Debug mode enabled (for more verbose logging of non-critical issues)
     $debugMode = true; // Set to true to enable debug logging (defaults to false)
-    echo "Instantiating EmailChecker " . ($debugMode ? "with DEBUG enabled.<br>" : "in standard mode.<br>");
-    $emailChecker = new IMAPEmailChecker($connection, $debugMode);
+    
+    echo "Connecting to " . htmlspecialchars($hostname) . "...<br>";    
+    $emailChecker = IMAPEmailChecker::connect($hostname, $username, $password, $debugMode);
 
     // --- Helper Function for Display ---
     function displayEmailDetails(array $email): void
@@ -124,9 +112,8 @@ try {
     $mailboxStatus = $emailChecker->checkMailboxStatus(); // Throws on failure
     echo "<ul>";
     echo "<li>Total Messages: " . $mailboxStatus['total'] . "</li>";
-    echo "<li>Highest UID: " . $mailboxStatus['highest_uid'] . "</li>";
-    echo "<li>Recent Count: " . count($mailboxStatus['recent_uids']) . "</li>";
     echo "<li>Unseen Count: " . count($mailboxStatus['unseen_uids']) . "</li>";
+    echo "<li>Highest UID: " . $mailboxStatus['highest_uid'] . "</li>";
     echo "</ul>";
     echo "<hr>";
 
@@ -251,13 +238,6 @@ try {
     echo "<p style='color: darkred; font-weight: bold;'>Unexpected Error: " . htmlspecialchars($e->getMessage()) . "</p>";
     // Log detailed error: error_log($e->getMessage() . "\n" . $e->getTraceAsString());
     exit(1);
-} finally {
-    // --- Clean up ---
-    // Ensure the connection is closed even if exceptions occurred
-    if ($connection) {
-        echo "Closing connection.<br>";
-        imap_close($connection);
-    }
 }
 
 ?>
@@ -268,18 +248,34 @@ try {
 
 Methods that perform IMAP operations may throw exceptions on failure. Batch processing methods (`check*`, `fetchMessagesByIds`) generally handle failures for *individual* messages internally (logging the error and skipping the message) but will throw exceptions for failures affecting the *entire* batch operation (e.g., the initial search/overview). Action methods (`setMessageReadStatus`, `deleteEmail`, `archiveEmail`) return `void` and throw exceptions on any failure.
 
-*   **`__construct($connection, bool $debug = false, string $bidRegex = '/#(\d+)/')`**:
+*   **`static connect(string $hostname, string $username, string $password, string $mailbox = 'INBOX', int $port = 993, string $flags = '/ssl', int $retries = 0, bool $debug = false, string $bidRegex = '/#\s*(\d+)/')`**:
+    *   A static factory method that establishes an IMAP connection and returns an IMAPEmailChecker instance. This is the recommended way to create an object of this class. The constructor remains available for injecting a pre-existing IMAP connection, ensuring backward compatibility.
+    *   **Parameters:**
+        *   `$hostname`: The IMAP server hostname (e.g., `imap.example.com`).
+        *   `$username`: The username for the IMAP account.
+        *   `$password`: The password for the IMAP account.
+        *   `$mailbox` (optional `string`, default `INBOX`): The mailbox to connect to.
+        *   `$port` (optional `int`, default `993`): The IMAP server port (e.g., 993 for IMAPS/SSL, 143 for IMAP/STARTTLS).
+        *   `$flags` (optional `string`, default `/ssl`): Connection flags (e.g., `/ssl`, `/tls`, `/novalidate-cert`).
+        *   `$retries` (optional `int`, default `0`): Number of connection retries for `imap_open()`.
+        *   `$debug` (optional `bool`, default `false`): Enables verbose logging via `error_log()` for non-critical issues within the created instance.
+        *   `$bidRegex` (optional `string`, default `/\\#\\s*(\\d+)/`): A PCRE regex string used to extract an identifier from the email subject. See constructor documentation for details.
+    *   **Returns:** `IMAPEmailChecker` - An instance of the class.
+    *   **Throws:** `InvalidArgumentException` If `$hostname`, `$username`, or `$bidRegex` is invalid. `RuntimeException` If the IMAP connection fails after all retries.
+
+
+*   **`__construct($connection, bool $debug = false, string $bidRegex = '/#\s*(\d+)/')`**:
     *   Instantiates the email checker.
     *   **Parameters:**
         *   `$connection`: The established IMAP connection resource or `IMAP\Connection` object.
         *   `$debug` (optional `bool`, default `false`): Enables verbose logging via `error_log()` for non-critical issues.
-        *   `$bidRegex` (optional `string`, default `'/\\#(\\d+)/'`): A PCRE regex string used to extract an identifier string from the email subject. The regex **must** include a capturing group (typically group 1) that captures the desired ID string and **cannot** be an empty string.
+        *   `$bidRegex` (optional `string`, default `/\\#\\s*(\\d+)/`): A PCRE regex string used to extract an identifier string from the email subject. The regex **must** include a capturing group (typically group 1) that captures the desired ID string and **cannot** be an empty string.
     *   **Throws:** `InvalidArgumentException` If `$bidRegex` is an empty string. `RuntimeException` If the provided `$connection` is invalid or closed.
 
 
 *   **`checkMailboxStatus()`**:
     *   Checks the status of the current mailbox efficiently.
-    *   **Returns:** `array` - An associative array with keys: `total`, `highest_uid`, `recent_uids`, `unseen_uids`.
+    *   **Returns:** `array` - An associative array with keys: `total`, `unseen_uids`, `highest_uid`.
     *   **Throws:** `RuntimeException` If any underlying IMAP operation (`check`, `uid`, `search`) fails.
 
 
