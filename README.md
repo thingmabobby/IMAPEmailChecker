@@ -259,7 +259,7 @@ Methods that perform IMAP operations may throw exceptions on failure. Batch proc
         *   `$flags` (optional `string`, default `/ssl`): Connection flags (e.g., `/ssl`, `/tls`, `/novalidate-cert`).
         *   `$retries` (optional `int`, default `0`): Number of connection retries for `imap_open()`.
         *   `$debug` (optional `bool`, default `false`): Enables verbose logging via `error_log()` for non-critical issues within the created instance.
-        *   `$bidRegex` (optional `string`, default `/\\#\\s*(\\d+)/`): A PCRE regex string used to extract an identifier from the email subject. See constructor documentation for details.
+        *   `$bidRegex` (optional `string`, default `/#\s*(\d+)/`): A PCRE regex string used to extract an identifier from the email subject. See constructor documentation for details.
     *   **Returns:** `IMAPEmailChecker` - An instance of the class.
     *   **Throws:** `InvalidArgumentException` If `$hostname`, `$username`, or `$bidRegex` is invalid. `RuntimeException` If the IMAP connection fails after all retries.
 
