@@ -49,13 +49,16 @@ class IMAPEmailChecker
 	public int $lastuid = 0;
 
 	// The list of messages fetched
+	/** @var array<int, array<string, mixed>> */
 	public array $messages = [];
 
 
  	/**
      * IMAPEmailChecker constructor.
      *
-     * @param resource|\IMAP\Connection $conn  The IMAP connection resource or object.
+     * @param \IMAP\Connection $conn  		   The IMAP connection resource or object. 
+	 * 										   Since we support when imap connections were resources (pre 8.1) AND objects we need to let 
+	 * 										   static analysis know to just treat it as post 8.1 and use the \IMAP\Connection object.
      * @param bool $debug                      Debug mode - logs non-critical errors if true.
      * @param string $bidRegex            	   Optional regex to extract a string ('bid') from the subject.
      *                                         Must contain a capturing group (usually group 1) for the ID.
@@ -149,7 +152,7 @@ class IMAPEmailChecker
         } catch (RuntimeException | InvalidArgumentException $e) {
             // Should not happen if connection is valid and bidRegex is default or valid
             // But if it does, close the connection we just opened
-            if (is_resource($connection) || (class_exists('\\IMAP\\Connection') && $connection instanceof \IMAP\Connection)) {
+            if (is_resource($connection)) {
                 @\imap_close($connection);
             }
 
@@ -168,6 +171,8 @@ class IMAPEmailChecker
 		if ($this->conn) {
 			// Check if it's a resource and not closed
 			if (is_resource($this->conn) && get_resource_type($this->conn) === 'imap') {
+				// we're supporting pre 8.1 so ignore this in static analysis (pre PHP 8.1 imap is a resource)
+				/** @phpstan-ignore-next-line */
 				@\imap_close($this->conn);
 			}
 
@@ -207,6 +212,7 @@ class IMAPEmailChecker
 
         // If it's a valid type, try to ping it to see if it's alive
         if ($isValidType) {
+			/** @var \IMAP\Connection $conn */
             return @\imap_ping($conn);
         }
 
@@ -225,10 +231,14 @@ class IMAPEmailChecker
 	 * Note: 'Unseen' messages have the \Unseen flag.
 	 * The highest UID is determined by finding the UID of the message with the highest sequence number.
 	 *
-	 * @return array An associative array with keys 'total' (int), 'unseen_uids' (array<int>), and 'highest_uid' (int)
-	 *                    or false on failure of any required IMAP operation.
-	 *                    'highest_uid' will be 0 if the mailbox is empty.
-	 *                    Example: ['total' => 150, 'unseen_uids' => [2340, 2343, 2345], 'highest_uid' => 2345]
+	 * @return array{
+	 *     total: int,                     // Total number of messages in the mailbox
+	 *     unseen_uids: array<int>,       // List of UIDs marked as unseen
+	 *     highest_uid: int               // UID of the last message (0 if mailbox is empty)
+	 * }
+	 *
+	 * Example: ['total' => 150, 'unseen_uids' => [2340, 2343, 2345], 'highest_uid' => 2345]
+	 *
 	 * @throws RuntimeException If any underlying IMAP operation (check, uid, search) fails during status retrieval.
 	 */
 	public function checkMailboxStatus(): array
@@ -241,10 +251,12 @@ class IMAPEmailChecker
 
 		// 1. Get total count using imap_check()
 		$check = @\imap_check($this->conn);
-		if ($check === false || !($check instanceof stdClass)) {
+		if ($check === false) {
 			throw new RuntimeException("IMAPEmailChecker: Failed to get mailbox check status (imap_check). Error: " . \imap_last_error());			
 		}
-		$status['total'] = isset($check->Nmsgs) ? (int)$check->Nmsgs : 0;
+		/** @var int|string $nmsgs */
+		$nmsgs = $check->Nmsgs ?? 0;
+		$status['total'] = (int)$nmsgs;
 
 		// 2. Get highest UID using imap_uid() with the highest sequence number, if mailbox is not empty
 		if ($status['total'] > 0) {
@@ -283,10 +295,12 @@ class IMAPEmailChecker
      * @param string $criteria   The IMAP search criteria string. Must not be empty.
      * @param bool   $returnUids If true (default), returns an array of UIDs.
      *                           If false, returns an array of message sequence numbers.
-     * @return array An array of integer UIDs or message numbers matching the criteria,
-     *                     sorted numerically. Returns an empty array if no messages match.
-	 * @throws InvalidArgumentException If the provided criteria string is empty after trimming.
- 	 * @throws RuntimeException If the underlying imap_search operation fails (e.g., server error, invalid syntax reported by server).
+     *
+     * @return array<int> A numerically indexed array of UIDs or message sequence numbers (integers),
+     *                    sorted ascending. Returns an empty array if no messages match the criteria.
+     *
+     * @throws InvalidArgumentException If the provided criteria string is empty after trimming.
+     * @throws RuntimeException If the underlying imap_search operation fails (e.g., server error, invalid syntax reported by server).
      */
     public function search(string $criteria, bool $returnUids = true): array
     {
@@ -354,7 +368,6 @@ class IMAPEmailChecker
 			if ($raw === false) {
 				// Error fetching part, continue if possible
 				throw new RuntimeException("IMAPEmailChecker: Failed to fetch body part {$partNum} for identifier {$identifier}");
-				return;
 			}
 
 			// decode by encoding type
@@ -368,6 +381,7 @@ class IMAPEmailChecker
 			};
 
 			// convert charset to utf8
+			assert(is_string($raw));
 			$raw = $this->normalizeToUtf8($raw, $part);
 
 			// recurse if multipart
@@ -433,6 +447,7 @@ class IMAPEmailChecker
 		$charset = null;
 		// Check parameters first (often used for text parts)
 		if (!empty($part->parameters) && is_array($part->parameters)) {
+			/** @var object{attribute: string, value: string} $p */
 			foreach ($part->parameters as $p) {
 				if (isset($p->attribute) && strcasecmp($p->attribute, 'charset') === 0) {
 					$charset = $p->value;
@@ -443,6 +458,7 @@ class IMAPEmailChecker
 
 		// Check dparameters if not found in parameters (often used for attachments/disposition)
 		if (!$charset && !empty($part->dparameters) && is_array($part->dparameters)) {
+			/** @var object{attribute: string, value: string} $p */
 			foreach ($part->dparameters as $p) {
 				if (isset($p->attribute) && strcasecmp($p->attribute, 'charset') === 0) {
 					$charset = $p->value;
@@ -513,10 +529,20 @@ class IMAPEmailChecker
 	 * Checks for attachments and inline images in the message, identified by message number or UID.
 	 * This method finds ALL attachments and inline parts. Filtering happens later in processMessage.
 	 *
-	 * @param int $identifier The message sequence number or UID.
-	 * @param bool $isUid Whether the identifier is a UID (true) or message number (false).
-	 * @return array An array of attachments/inline parts with keys: filename, content, type, mime_type, disposition
-	 *               and optionally content_id for inline images.
+	 * Each returned item includes:
+	 * - 'filename' (string): The name of the attachment or inline part.
+	 * - 'content' (string): The raw decoded content of the attachment.
+	 * - 'type' (string): The MIME subtype (e.g., 'jpeg', 'pdf').
+	 * - 'mime_type' (string): The full MIME type (e.g., 'image/jpeg').
+	 * - 'disposition' (string|null): Either 'attachment', 'inline', or null.
+	 * - 'content_id' (string, optional): The content ID used for inline images (without angle brackets).
+	 *
+	 * @param int  $identifier The message sequence number or UID.
+	 * @param bool $isUid      Whether the identifier is a UID (true) or a message number (false).
+	 *
+	 * @return array<int, array<string, mixed>> A numerically indexed array of associative arrays,
+	 *                                          each representing an attachment or inline part.
+	 *
 	 * @throws RuntimeException If fetching the message structure (imap_fetchstructure) fails.
 	 */
 	private function checkForAttachments(int $identifier, bool $isUid = false): array
@@ -542,6 +568,7 @@ class IMAPEmailChecker
 
 					// Prefer filename from Content-Disposition dparameters
 					if (!empty($part->dparameters)) {
+						/** @var object{attribute: string, value: string} $param */
 						foreach ($part->dparameters as $param) {
 							if (isset($param->attribute) && strcasecmp($param->attribute, 'filename') === 0) {
 								$filename = $param->value;
@@ -552,6 +579,7 @@ class IMAPEmailChecker
 
 					// Fallback to name from Content-Type parameters if filename not found
 					if ($filename === null && !empty($part->parameters)) {
+						/** @var object{attribute: string, value: string} $param */
 						foreach ($part->parameters as $param) {
 							if (isset($param->attribute) && strcasecmp($param->attribute, 'name') === 0) {
 								$filename = $param->value;
@@ -674,9 +702,18 @@ class IMAPEmailChecker
 	 * Searches for "cid:" references in the HTML and replaces them with base64-encoded
 	 * data URIs using the matching inline image attachment. Uses the FULL list of attachments found.
 	 *
+	 * Each attachment array in $allAttachments should include:
+	 * - 'filename' (string)
+	 * - 'content' (string) — decoded binary content
+	 * - 'type' (string)
+	 * - 'mime_type' (string)
+	 * - 'disposition' (string|null)
+	 * - 'content_id' (string) — only for inline images
+	 *
 	 * @param string $html The original HTML content.
-	 * @param array $allAttachments The list of ALL attachments/inline parts from checkForAttachments().
-	 * @return string The HTML content with embedded inline images.
+	 * @param array<int, array<string, mixed>> $allAttachments The list of all attachments/inline parts from checkForAttachments().
+	 *
+	 * @return string The HTML content with embedded inline images, if any matching CIDs were found.
 	 */
 	private function embedInlineImages(string $html, array $allAttachments): string
 	{
@@ -684,29 +721,36 @@ class IMAPEmailChecker
 			return $html; // No attachments or no CIDs found, return original HTML
 		}
 
-		return preg_replace_callback('/(["\']?)cid:([^"\'\s>]+)(["\']?)/i', function ($matches) use ($allAttachments) {
-			$cid = $matches[2]; // The actual Content-ID
-			$quoteStart = $matches[1]; // Leading quote, if any
-			$quoteEnd = $matches[3]; // Trailing quote, if any
+		return preg_replace_callback(
+			'/(["\']?)cid:([^"\'\s>]+)(["\']?)/i',
+			function ($matches) use ($allAttachments) {
+				$cid = $matches[2];
+				$quoteStart = $matches[1];
+				$quoteEnd = $matches[3];
 
-			foreach ($allAttachments as $attachment) {
-				// Check if it's inline and the content_id matches
-				if (isset($attachment['content_id']) && $attachment['content_id'] === $cid && ($attachment['disposition'] ?? null) === 'inline') {
-					// Use the full mime_type calculated earlier.
-					$mime = $attachment['mime_type'] ?? 'application/octet-stream'; // Fallback needed?
-					if (strpos($mime, '/') === false) { // Simple check if it looks like a full mime type
-						// If only subtype was stored previously, reconstruct (e.g., image/jpeg)
-						// This depends on how mime_type was stored; best to store the full one.
-						$mime = 'image/' . strtolower($mime); // Assuming image if only subtype stored
+				foreach ($allAttachments as $attachment) {
+					if (isset($attachment['content_id'], $attachment['disposition']) && $attachment['content_id'] === $cid && $attachment['disposition'] === 'inline') {
+						$mime = isset($attachment['mime_type']) && is_string($attachment['mime_type'])
+							? $attachment['mime_type']
+							: 'application/octet-stream';
+
+						if (strpos($mime, '/') === false) {
+							$mime = 'image/' . strtolower((string)$mime);
+						}
+
+						if (!isset($attachment['content']) || !is_string($attachment['content'])) {
+							continue; // Skip if content is missing or not a string
+						}
+
+						$base64 = base64_encode($attachment['content']);
+						return $quoteStart . "data:" . $mime . ";base64," . $base64 . $quoteEnd;
 					}
-					$base64 = base64_encode($attachment['content']);
-					// Return the data URI, preserving original quotes if they existed
-					return $quoteStart . "data:" . $mime . ";base64," . $base64 . $quoteEnd;
 				}
-			}
-			// Return the original match (e.g., "cid:some_id") if no corresponding inline attachment is found.
-			return $matches[0];
-		}, $html);
+
+				return $matches[0];
+			},
+			$html
+		) ?? $html;
 	}
 
 
@@ -739,8 +783,10 @@ class IMAPEmailChecker
 	 * Formats an array of address objects from imap_headerinfo into an array of strings.
 	 * Handles nested groups if present.
 	 *
-	 * @param array|null $addresses Array of address objects (e.g., $header->to).
-	 * @return array An array of formatted email address strings.
+	 * Each address is expected to be a stdClass with at least 'mailbox' and 'host' properties.
+	 *
+	 * @param array<int, stdClass>|null $addresses Array of address objects (e.g., $header->to), or null.
+	 * @return array<int, string> An array of formatted email address strings.
 	 */
 	private function formatAddressList(?array $addresses): array
 	{
@@ -778,7 +824,7 @@ class IMAPEmailChecker
 		}
 
 		$decoded = mb_decode_mimeheader($value);
-		if ($decoded === false) {
+		if ($decoded === '' || $decoded === $value) {
 			if ($this->debug) { error_log("IMAPEmailChecker: mb_decode_mimeheader failed for header value. Returning original value: " . $value); }
 			// Return the original raw value as a fallback, it might be plain ASCII
 			return $value;
@@ -803,7 +849,7 @@ class IMAPEmailChecker
 	}
 
 
-	/**
+		/**
 	 * Fetches and processes specific email messages by their identifiers (UIDs or Sequence Numbers).
 	 *
 	 * This method attempts to retrieve the full details for each valid message identifier provided.
@@ -814,12 +860,12 @@ class IMAPEmailChecker
 	 * Note: This method does NOT update the main $this->messages or $this->lastuid properties
 	 * of the class, as it's intended for fetching specific messages on demand.
 	 *
-	 * @param array $identifiers An array of potential integer UIDs or message sequence numbers.
-	 * @param bool  $isUid       True if the identifiers are UIDs (default), False if they are sequence numbers.
-	 * @return array An associative array where keys are the successfully processed identifiers
-	 *               (using the UID from the message if $isUid=true, otherwise the original sequence number)
-	 *               and values are the processed message data arrays. Messages that failed processing
-	 *               or had invalid identifiers will be omitted from the results but logged.
+	 * @param array<int> $identifiers An array of positive integer UIDs or message sequence numbers.
+	 * @param bool  $isUid  True if the identifiers are UIDs (default), false if they are sequence numbers.
+	 *
+	 * @return array<int, array<string, mixed>> An associative array where keys are UIDs or sequence numbers,
+	 *                                          and values are processed message data arrays.
+	 *                                          Failed messages are omitted but logged.
 	 */
 	public function fetchMessagesByIds(array $identifiers, bool $isUid = true): array
 	{
@@ -872,11 +918,29 @@ class IMAPEmailChecker
 	 * Failures during body decoding or fetching individual attachment contents are logged,
 	 * allowing the method to return partial data (e.g., message without body or with fewer attachments).
 	 *
-	 * @param int $identifier The message number or UID to process.
-	 * @param bool $isUid True if $identifier is a UID, false if it's a message number. Default is false.
-	 * @return array The processed message data array.
+	 * Returned array keys include:
+	 * - uid (int)
+	 * - message_number (int)
+	 * - message_id (string|null)
+	 * - subject (string)
+	 * - message_body (string)
+	 * - date (string|null)
+	 * - datetime (DateTime|null)
+	 * - to, cc, bcc (array<int, string>)
+	 * - tocount, cccount, bcccount (int)
+	 * - fromaddress (string)
+	 * - from (string)
+	 * - bid (string|null)
+	 * - unseen (bool)
+	 * - attachments (array<int, array<string, mixed>>)
+	 *
+	 * @param int  $identifier The message number or UID to process.
+	 * @param bool $isUid      True if $identifier is a UID, false if it's a message number. Default is false.
+	 *
+	 * @return array<string, mixed> The processed message data as an associative array.
+	 *
 	 * @throws RuntimeException If fetching essential message information (MsgNo, UID, Header)
-	 *                         		or the attachment structure fails.
+	 *                          or the attachment structure fails.
 	 */
 	private function processMessage(int $identifier, bool $isUid = false): array
 	{
@@ -899,7 +963,7 @@ class IMAPEmailChecker
 
 		// 2. Fetch Header Info using Message Number
 		$header = @\imap_headerinfo($this->conn, $msgNo);
-		if (!$header || !($header instanceof stdClass)) {
+		if ($header === false) {
 			$error = \imap_last_error() ?: 'Unknown error';
 			throw new RuntimeException("Failed to fetch header info for message number {$msgNo} (UID: {$uid}). IMAP Error: " . $error);
 		}
@@ -1066,8 +1130,8 @@ class IMAPEmailChecker
 	 * Results are stored in the public $messages property keyed by UID and also returned by this method.
 	 * The public $lastuid property is updated to the highest UID encountered.
 	 *
-	 * @return array An array of successfully processed email data, keyed by UID.
-	 *               Messages that failed processing will be omitted but logged.
+	 * @return array<int, array<string, mixed>> An array keyed by UID with processed message data arrays.
+	 *                                          Messages that failed processing will be omitted but logged.
 	 * @throws RuntimeException If obtaining the initial message count (imap_num_msg) fails.
 	 */
 	public function checkAllEmail(): array
@@ -1096,7 +1160,7 @@ class IMAPEmailChecker
 				// Proceed to fallback loop below
 			}
 			// Check if overview succeeded but returned empty (less common for 1:N) or wasn't an array
-			elseif (empty($overviews) || !is_array($overviews)) {
+			elseif (empty($overviews)) {
 				if ($this->debug) { error_log("IMAPEmailChecker: imap_fetch_overview returned empty or invalid data. Falling back to message number iteration."); }
 				// Proceed to fallback loop below
 			}
@@ -1158,6 +1222,7 @@ class IMAPEmailChecker
 			}
 		}
 
+		assert(is_int($current_last_uid));
 		$this->lastuid = $current_last_uid; // Update last processed UID
 		return $this->messages;
 	}
@@ -1173,9 +1238,9 @@ class IMAPEmailChecker
 	 * The public $lastuid property is updated to the highest UID encountered among the processed messages.
 	 *
 	 * @param DateTime $date The starting date (inclusive). Messages from this day onward will be checked.
-	 * @return array An array of successfully processed email data, keyed by UID. Returns an empty array
-	 *               if no messages are found matching the date criteria. Messages that failed processing
-	 *               will be omitted but logged.
+	 * @return array<int, array<string, mixed>> An array of processed email data keyed by UID.
+	 *                                          Returns an empty array if no messages match.
+	 *                                          Messages that failed processing will be omitted but logged.
 	 * @throws RuntimeException If the underlying imap_search operation fails.
 	 */
 	public function checkSinceDate(DateTime $date): array
@@ -1222,7 +1287,7 @@ class IMAPEmailChecker
 		}
 
 		// Update lastuid
-		$this->lastuid = $current_last_uid;
+		$this->lastuid = (int)$current_last_uid;
 
 		return $this->messages;
 	}
@@ -1238,9 +1303,8 @@ class IMAPEmailChecker
 	 * The public $lastuid property is updated to the highest UID encountered among the successfully processed messages.
 	 *
 	 * @param int $uid The UID *after* which to fetch messages (exclusive).
-	 * @return array An array of successfully processed email data, keyed by UID. Returns an empty array
-	 *               if no messages are found with a UID greater than the input $uid. Messages that failed processing
-	 *               will be omitted but logged.
+	 * @return array<int, array<string, mixed>> An array of processed email data keyed by UID.
+	 *                                          Messages that failed processing are omitted but logged.
 	 * @throws RuntimeException If the underlying imap_fetch_overview operation fails.
 	 */
 	public function checkSinceLastUID(int $uid): array
@@ -1299,7 +1363,7 @@ class IMAPEmailChecker
 		// Update the class property ONLY to the highest UID successfully processed in this run.
 		// If no new messages were processed successfully, $this->lastuid remains unchanged
 		// because $highest_processed_uid would still equal the input $uid.
-		$this->lastuid = $highest_processed_uid;
+		$this->lastuid = (int)$highest_processed_uid;
 
 		return $this->messages;
 	}
@@ -1314,8 +1378,8 @@ class IMAPEmailChecker
 	 * Results are stored in the public $messages property keyed by UID and also returned by this method.
 	 * The public $lastuid property is updated to the highest UID encountered among the processed messages.
 	 *
-	 * @return array An array of successfully processed unread email data, keyed by UID. Returns an empty array
-	 *               if no unread emails are found. Messages that failed processing will be omitted but logged.
+	 * @return array<int, array<string, mixed>> An array of processed unread email data keyed by UID.
+	 *               Returns an empty array if no unread emails are found. Messages that failed processing will be omitted but logged.
 	 * @throws RuntimeException If the underlying imap_search operation for 'UNSEEN' messages fails.
 	 */
 	public function checkUnreadEmails(): array
@@ -1359,7 +1423,7 @@ class IMAPEmailChecker
 		}
 
 		// Update the class property to the highest UID successfully processed in this run.
-		$this->lastuid = $highest_processed_uid;
+		$this->lastuid = (int)$highest_processed_uid;
 
 		return $this->messages;
 	}
